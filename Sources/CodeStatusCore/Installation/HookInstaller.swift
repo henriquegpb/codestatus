@@ -98,9 +98,14 @@ public struct HookInstaller: Sendable {
 
     public enum Failure: Error, Equatable {
         case targetIsNotUTF8(path: String)
+        /// Something is at the target path, but we could not read it — so we
+        /// cannot know what replacing it would destroy.
+        case targetIsUnreadable(path: String)
         case writeFailed(path: String)
         case backupFailed(path: String)
         case validationFailed(path: String, reason: String)
+        /// The file moved under a plan computed against an older version of it.
+        case targetChangedSincePlan(path: String)
     }
 
     /// Seconds we allow ourselves before the agent gives up on us. The hook is
@@ -351,12 +356,42 @@ public struct HookInstaller: Sendable {
     }
 
     /// Whether every event we manage currently carries exactly our entry.
+    ///
+    /// Exactly, and exactly *ours as we would write it now* — not merely one
+    /// entry somewhere in the array whose command happens to resolve to our
+    /// binary. Our binary sits at a fixed path across upgrades, so an entry
+    /// written by an older build still points at it: a loose test reports such a
+    /// file as installed and the entry is never refreshed. An entry carrying
+    /// `"async": false` is the case that matters, because it puts our hook on
+    /// the agent's critical path on every tool call — the one thing this
+    /// installer promises never to do — while reporting itself healthy.
+    ///
+    /// Duplicates count too: two of our entries fire the hook twice per event,
+    /// and ``validate(_:fileManager:)`` already refuses to accept that as the
+    /// result of an install. This is the same question, asked later.
     public func isInstalled(fileManager: FileManager = .default) throws -> Bool {
         guard let text = try readTarget(fileManager: fileManager) else { return false }
+        guard let expected = Self.canonicalEntry(entryJSON()) else { return false }
         let surgeon = try JSONSurgeon(text)
         return events.allSatisfy { event in
-            (surgeon.arrayElements(atPath: ["hooks", event]) ?? []).contains(where: isOurEntry)
+            let ours = (surgeon.arrayElements(atPath: ["hooks", event]) ?? []).filter(isOurEntry)
+            guard ours.count == 1 else { return false }
+            return Self.canonicalEntry(ours[0]) == expected
         }
+    }
+
+    /// One entry reduced to a form two spellings of the same entry compare equal
+    /// on: whitespace and key order gone, every value left exactly as written.
+    ///
+    /// Needed because the entry in the file is rendered in the user's own
+    /// layout, so it is never byte-equal to ``entryJSON()``. `JSONSerialization`
+    /// is safe here in a way it is not for editing: this compares two small
+    /// objects we authored and never writes anything back.
+    private static func canonicalEntry(_ text: String) -> Data? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) else {
+            return nil
+        }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 
     /// Backup, atomic replace, re-validate, and restore the backup if the result
@@ -366,6 +401,18 @@ public struct HookInstaller: Sendable {
     @discardableResult
     public func apply(_ plan: Plan, fileManager: FileManager = .default) throws -> URL? {
         guard !plan.isNoOp else { return nil }
+
+        // A plan is a statement about a file as it was when the plan was made,
+        // and `updatedText` is the *whole* file, not a patch. Writing it over a
+        // file that has moved since would not merge the two — it would silently
+        // delete whatever changed in between, and the backup we are about to
+        // take would preserve the stale text rather than the lost one. The
+        // window is real: `apply` is public precisely so onboarding can show a
+        // diff and wait for the user, and `~/.claude/settings.json` is written
+        // by the agent itself whenever the user changes a setting.
+        guard try readTarget(fileManager: fileManager) == plan.originalText else {
+            throw Failure.targetChangedSincePlan(path: targetPath)
+        }
 
         try paths.createDirectories(fileManager: fileManager)
         let directory = targetURL.deletingLastPathComponent()
@@ -383,13 +430,19 @@ public struct HookInstaller: Sendable {
             backup = try writeBackup(originalData, fileManager: fileManager)
         }
 
+        // A file that already exists keeps its own permissions: it is the user's
+        // file, and quietly narrowing access to a config the CLI and the VS Code
+        // extension share is not ours to decide. A file we create is ours to
+        // create, and is created 0600.
+        //
+        // Sampled once, here, before anything on disk moves. Asking again from
+        // inside `restore` would be asking about a file we had just deleted —
+        // `stat` fails, the fallback applies, and a 0644 file the user chose
+        // came back 0600 from a failure that was supposed to change nothing.
+        let mode = existingMode(fileManager: fileManager) ?? 0o600
+
         do {
             if let updated = plan.updatedText {
-                // A file that already exists keeps its own permissions: it is the
-                // user's file, and quietly narrowing access to a config the CLI
-                // and the VS Code extension share is not ours to decide. A file
-                // we create is ours to create, and is created 0600.
-                let mode = existingMode(fileManager: fileManager) ?? 0o600
                 try FileSurgery.atomicallyWrite(
                     Data(updated.utf8),
                     to: resolvedTarget(fileManager: fileManager),
@@ -404,7 +457,7 @@ public struct HookInstaller: Sendable {
             }
             try validate(plan, fileManager: fileManager)
         } catch {
-            restore(originalData, fileManager: fileManager)
+            restore(originalData, mode: mode, fileManager: fileManager)
             throw error
         }
         return backup
@@ -412,14 +465,41 @@ public struct HookInstaller: Sendable {
 
     // MARK: - Disk
 
+    /// The target's text, or nil when there is genuinely nothing there.
+    ///
+    /// The nil is load-bearing in three separate destructive decisions: it means
+    /// no backup is taken, it sets `createdFile` on the receipt so a later
+    /// uninstall deletes the file, and it makes ``restore(_:fileManager:)``
+    /// remove whatever is at the path instead of writing bytes back. So "absent"
+    /// has to mean absent.
+    ///
+    /// `FileManager.contents(atPath:)` cannot carry that distinction: it answers
+    /// nil for a file that is not there, for one we lack permission to read, for
+    /// a directory, for a symlink loop, and for an I/O error alike. Reading each
+    /// of those as "absent" meant overwriting a config we had never seen, with
+    /// no backup, and then deleting it when validation could not read it back —
+    /// total, unrecoverable loss of the user's settings. `stat(2)` plus `errno`
+    /// is what actually distinguishes them: only `ENOENT`/`ENOTDIR` mean nothing
+    /// is there, and a dangling symlink is one of those, so an unfollowed link
+    /// still reads as the empty path it points at.
     private func readTarget(fileManager: FileManager) throws -> String? {
-        guard let data = fileManager.contents(atPath: targetURL.path) else { return nil }
-        guard let text = String(data: data, encoding: .utf8) else {
-            // Lossy decoding would silently rewrite bytes we cannot represent,
-            // which is exactly the corruption this whole type exists to prevent.
-            throw Failure.targetIsNotUTF8(path: targetPath)
+        if let data = fileManager.contents(atPath: targetURL.path) {
+            guard let text = String(data: data, encoding: .utf8) else {
+                // Lossy decoding would silently rewrite bytes we cannot represent,
+                // which is exactly the corruption this whole type exists to prevent.
+                throw Failure.targetIsNotUTF8(path: targetPath)
+            }
+            return text
         }
-        return text
+
+        var info = stat()
+        if stat(targetURL.path, &info) == 0 {
+            throw Failure.targetIsUnreadable(path: targetPath)
+        }
+        switch errno {
+        case ENOENT, ENOTDIR: return nil
+        default: throw Failure.targetIsUnreadable(path: targetPath)
+        }
     }
 
     /// The file a write must actually land on.
@@ -516,10 +596,9 @@ public struct HookInstaller: Sendable {
     /// config: it would leave our half-installed text in the dotfiles repo and
     /// `rename(2)` the original over the link, replacing it with a regular
     /// file — destroying the link on the one path where we changed nothing.
-    private func restore(_ originalData: Data?, fileManager: FileManager) {
+    private func restore(_ originalData: Data?, mode: Int, fileManager: FileManager) {
         let destination = resolvedTarget(fileManager: fileManager)
         if let originalData {
-            let mode = existingMode(fileManager: fileManager) ?? 0o600
             try? FileSurgery.atomicallyWrite(
                 originalData,
                 to: destination,

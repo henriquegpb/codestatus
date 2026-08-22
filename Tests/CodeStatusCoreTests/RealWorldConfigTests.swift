@@ -482,3 +482,262 @@ struct RealWorldConfigTests {
         #expect(after == broken)
     }
 }
+
+/// The three ways an install could have destroyed a settings file outright,
+/// each found by probing rather than by reading the code.
+///
+/// They share a shape: something makes the installer believe the file is not
+/// there, or is other than it is, and the recovery machinery then does exactly
+/// the wrong thing with total confidence.
+@Suite("Installation cannot destroy a file it misread")
+struct DestructiveInstallTests {
+
+    private func makeHome() throws -> (home: URL, paths: RuntimePaths, target: URL, cleanup: () -> Void) {
+        let home = URL(fileURLWithPath: "/tmp/cs-dst-\(getuid())-\(UInt32.random(in: 0..<0xFFFFFF))")
+        let manager = FileManager.default
+        try manager.createDirectory(
+            at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        let paths = RuntimePaths(home: home)
+        try paths.createDirectories()
+        let target = ClaudeHookInstaller.settingsURL(home: home)
+        return (home, paths, target, {
+            try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            try? manager.removeItem(at: home)
+        })
+    }
+
+    private static let precious = """
+    {
+      "env": { "ANTHROPIC_API_KEY": "sk-ant-the-users-key" },
+      "permissions": { "allow": ["Bash"] },
+      "theme": "dark"
+    }
+    """
+
+    /// `FileManager.contents(atPath:)` answers nil for a file it cannot read
+    /// exactly as it does for one that is not there. That nil decides three
+    /// destructive things at once — no backup, `createdFile` on the receipt, and
+    /// a restore that *deletes* — so reading a permission error as "absent" lost
+    /// the user's settings with no way back.
+    @Test("An unreadable settings file is refused, not treated as absent")
+    func unreadableIsNotAbsent() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        try Data(Self.precious.utf8).write(to: environment.target)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000], ofItemAtPath: environment.target.path)
+
+        // Running as root would make this unreadable file readable and the test
+        // meaningless, so skip rather than pass vacuously.
+        try #require(FileManager.default.contents(atPath: environment.target.path) == nil)
+
+        let installer = ClaudeHookInstaller(paths: environment.paths, home: environment.home)
+        #expect(throws: (any Error).self) { _ = try installer.install() }
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: environment.target.path)
+        let after = try String(contentsOf: environment.target, encoding: .utf8)
+        #expect(after == Self.precious, "the file we could not read was overwritten")
+    }
+
+    /// `apply` takes a plan, and `updatedText` is the whole file rather than a
+    /// patch. Onboarding shows that plan as a diff and waits for a human, while
+    /// the agent rewrites the same file whenever the user changes a setting — so
+    /// the window is real, and writing through it would delete the intervening
+    /// change *and* back up the stale text instead of the lost one.
+    @Test("A plan is refused once the file has moved under it")
+    func staleplanIsRefused() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        try Data(Self.precious.utf8).write(to: environment.target)
+
+        let installer = ClaudeHookInstaller(paths: environment.paths, home: environment.home)
+        let plan = try installer.planInstall()
+
+        // The user changes a setting while the confirmation sheet is open.
+        let edited = Self.precious.replacingOccurrences(of: "\"dark\"", with: "\"light\"")
+        try Data(edited.utf8).write(to: environment.target)
+
+        #expect(throws: (any Error).self) { _ = try installer.installer.apply(plan) }
+
+        let after = try String(contentsOf: environment.target, encoding: .utf8)
+        #expect(after == edited, "an edit made after planning was silently discarded")
+    }
+
+    /// The failure path is supposed to change nothing. Sampling the mode from
+    /// inside `restore` asks about a file that has just been deleted: `stat`
+    /// fails, the 0600 fallback applies, and a 0644 file the user chose comes
+    /// back narrowed by an operation that was meant to be a no-op.
+    @Test("A failed install restores the file with its original permissions")
+    func restoreKeepsPermissions() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        try Data(Self.precious.utf8).write(to: environment.target)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: environment.target.path)
+
+        var installer = HookInstaller(
+            paths: environment.paths,
+            provider: .claudeCode,
+            targetURL: environment.target,
+            events: ClaudeHookInstaller.events
+        )
+        struct Forced: Error {}
+        installer.validationProbe = { _ in throw Forced() }
+
+        #expect(throws: (any Error).self) { _ = try installer.install() }
+
+        let after = try String(contentsOf: environment.target, encoding: .utf8)
+        #expect(after == Self.precious, "restore did not put the original bytes back")
+
+        var info = stat()
+        #expect(stat(environment.target.path, &info) == 0)
+        #expect(Int(info.st_mode & 0o777) == 0o644,
+                "restore changed permissions on a path that was supposed to be untouched")
+    }
+
+    /// The same misreading, reached through `ELOOP` rather than `EACCES`. A
+    /// mutually-referencing pair of links is unreadable, so the installer took
+    /// the path for empty ground and `rename(2)`d a regular file over the first
+    /// link — quietly destroying a link the user could still repair by fixing
+    /// the other end.
+    @Test("A looping symlink is refused rather than replaced with a regular file")
+    func symlinkLoopIsRefused() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        let manager = FileManager.default
+        let other = environment.home.appendingPathComponent(".claude/other.json")
+        try manager.createSymbolicLink(
+            atPath: environment.target.path, withDestinationPath: "other.json")
+        try manager.createSymbolicLink(
+            atPath: other.path, withDestinationPath: "settings.json")
+
+        let installer = ClaudeHookInstaller(paths: environment.paths, home: environment.home)
+        #expect(throws: (any Error).self) { _ = try installer.install() }
+
+        var info = stat()
+        #expect(lstat(environment.target.path, &info) == 0)
+        #expect((info.st_mode & S_IFMT) == S_IFLNK,
+                "the link was replaced by a regular file")
+    }
+
+    /// The mode has to be sampled before anything on disk moves, not from inside
+    /// `restore`. This is the shape where it matters: uninstall *removes* the
+    /// file, so by the time `restore` asked, `stat` had nothing to answer about
+    /// and the 0600 fallback applied — a failure that changed nothing otherwise
+    /// still narrowed a file the user had deliberately made group-readable.
+    @Test("A failed uninstall puts the file back with the permissions it had")
+    func failedUninstallKeepsPermissions() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+
+        // A file we created, so uninstall is entitled to remove it — the only
+        // path on which `restore` is asked to recreate a file from nothing.
+        let claude = ClaudeHookInstaller(paths: environment.paths, home: environment.home)
+        try claude.install()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: environment.target.path)
+        let before = try String(contentsOf: environment.target, encoding: .utf8)
+
+        var installer = HookInstaller(
+            paths: environment.paths,
+            provider: .claudeCode,
+            targetURL: environment.target,
+            events: ClaudeHookInstaller.events
+        )
+        struct Forced: Error {}
+        installer.validationProbe = { _ in throw Forced() }
+        #expect(throws: (any Error).self) { _ = try installer.uninstall() }
+
+        #expect(FileManager.default.fileExists(atPath: environment.target.path),
+                "a failed uninstall left the file deleted")
+        #expect(try String(contentsOf: environment.target, encoding: .utf8) == before)
+        var info = stat()
+        #expect(stat(environment.target.path, &info) == 0)
+        #expect(Int(info.st_mode & 0o777) == 0o644,
+                "restore recreated the file with the 0600 fallback instead of its own mode")
+    }
+}
+
+/// `isInstalled()` is the only question the rest of the app asks about the
+/// config, and it has to mean what it says.
+@Suite("isInstalled agrees with what the agent will actually run")
+struct InstalledStateTests {
+
+    private func makeHome() throws -> (paths: RuntimePaths, target: URL, cleanup: () -> Void) {
+        let home = URL(fileURLWithPath: "/tmp/cs-ist-\(getuid())-\(UInt32.random(in: 0..<0xFFFFFF))")
+        let manager = FileManager.default
+        try manager.createDirectory(
+            at: home.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+        let paths = RuntimePaths(home: home)
+        try paths.createDirectories()
+        return (paths, ClaudeHookInstaller.settingsURL(home: home), {
+            try? manager.removeItem(at: home)
+        })
+    }
+
+    /// Our binary lives at a fixed path across upgrades, so an entry written by
+    /// an older build still resolves to it. Testing only "some entry here points
+    /// at our binary" therefore reports such a file as healthy and the entry is
+    /// never refreshed. `"async": false` is the case that matters: it puts our
+    /// hook on the agent's critical path on every single tool call — the one
+    /// thing this installer promises never to do — while the app shows a green
+    /// tick and never offers to fix it.
+    @Test("A blocking entry left by an older build does not read as installed")
+    func staleBlockingEntryIsNotInstalled() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        let paths = environment.paths
+
+        // Exactly what an older build would have left: same command path, same
+        // shape, but synchronous and with its own timeout.
+        let stale = "{\"hooks\":{"
+            + ClaudeHookInstaller.events.map { event in
+                "\"\(event)\":[{\"hooks\":[{\"type\":\"command\",\"command\":"
+                    + JSONSurgeon.quoted(paths.hookBinary.path)
+                    + ",\"args\":[\"--provider\",\"claude-code\"]"
+                    + ",\"timeout\":30,\"async\":false}]}]"
+            }.joined(separator: ",")
+            + "}}"
+        try Data(stale.utf8).write(to: environment.target)
+
+        let claude = ClaudeHookInstaller(
+            paths: paths, home: environment.target.deletingLastPathComponent()
+                .deletingLastPathComponent())
+        #expect(try claude.isInstalled() == false,
+                "a synchronous hook on the agent's critical path read as installed")
+
+        // And the cure is the ordinary install, which replaces it in place.
+        try claude.install()
+        #expect(try claude.isInstalled())
+        let after = try String(contentsOf: environment.target, encoding: .utf8)
+        #expect(!after.contains("\"async\": false") && !after.contains("\"async\":false"))
+    }
+
+    /// Two copies of our entry fire the hook twice for every event. `validate`
+    /// already refuses to accept that as the result of an install; asking the
+    /// same question later must not get a different answer.
+    @Test("Our entry present twice does not read as installed")
+    func duplicateOfOursIsNotInstalled() throws {
+        let environment = try makeHome()
+        defer { environment.cleanup() }
+        let home = environment.target.deletingLastPathComponent().deletingLastPathComponent()
+        let claude = ClaudeHookInstaller(paths: environment.paths, home: home)
+        try claude.install()
+        #expect(try claude.isInstalled())
+
+        var surgeon = try JSONSurgeon(try String(contentsOf: environment.target, encoding: .utf8))
+        try surgeon.appendToArray(
+            atPath: ["hooks", "Stop"], element: claude.installer.entryJSON())
+        try Data(surgeon.text.utf8).write(to: environment.target)
+
+        #expect(try claude.isInstalled() == false, "a doubled entry read as installed")
+
+        try claude.install()
+        #expect(try claude.isInstalled())
+        let elements = try #require(
+            JSONSurgeon(try String(contentsOf: environment.target, encoding: .utf8))
+                .arrayElements(atPath: ["hooks", "Stop"]))
+        #expect(elements.filter(claude.installer.isOurEntry).count == 1)
+    }
+}
