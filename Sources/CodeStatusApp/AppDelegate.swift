@@ -1,0 +1,209 @@
+import AppKit
+import CodeStatusCore
+import ServiceManagement
+import os
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    private let model = HUDModel()
+    private var notifications: NotificationCoordinator!
+    private var daemon: SessionDaemon!
+    private var hud: NotchHUDController!
+    private var menuBar: MenuBarController!
+    private var opener: SessionOpener!
+    private var diagnostics: DiagnosticsWindowController!
+    private var onboarding: OnboardingWindowController!
+    private var settingsWindow: SettingsWindowController!
+    private let settings = SettingsModel()
+    private let logger = Logger(subsystem: "co.codestatus", category: "app")
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // A menu bar companion, not a windowed app: no Dock icon, no window on
+        // launch. LSUIElement in Info.plist says the same thing, but setting it
+        // here keeps `swift run` behaving the same as the bundle.
+        NSApp.setActivationPolicy(.accessory)
+
+        installHookBinaryIfNeeded()
+
+        opener = SessionOpener()
+        notifications = NotificationCoordinator(
+            suppression: FrontmostSessionSuppressor(
+                selectedTTYProvider: { [opener] in opener?.frontmostTerminalTTY() }
+            )
+        )
+        daemon = SessionDaemon(model: model, notifications: notifications)
+        hud = NotchHUDController(model: model)
+        menuBar = MenuBarController(model: model)
+
+        wireInteractions()
+
+        daemon.onRegistryChanged = { [weak self] in
+            self?.hud.refresh()
+            self?.menuBar.refresh()
+        }
+        daemon.start()
+
+        // First run walks the user through permissions and hook installation.
+        // On later launches we ask for notification permission directly, since
+        // macOS only shows the prompt once and the user may have deferred it.
+        onboarding = OnboardingWindowController(notifications: notifications) { [weak self] in
+            self?.daemon.refreshAdapters()
+            self?.logger.info("onboarding completed")
+        }
+        if OnboardingWindowController.hasCompleted {
+            Task { await notifications.requestAuthorization() }
+        } else {
+            onboarding.showIfNeeded()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        daemon.stop()
+        hud.teardown()
+    }
+
+    private func wireInteractions() {
+        diagnostics = DiagnosticsWindowController(
+            builder: DiagnosticsBuilder(
+                daemon: daemon, notifications: notifications, paths: RuntimePaths()
+            ),
+            onSendTestEvent: { [weak self] in self?.sendTestEvent() }
+        )
+
+        settingsWindow = SettingsWindowController(
+            model: settings,
+            onOpenSetup: { [weak self] in self?.onboarding.show() },
+            onUninstallHooks: { [weak self] in self?.uninstallHooks() }
+        )
+        settings.onChange = { [weak self] in self?.applySettings() }
+        applySettings()
+
+        menuBar.onOpenSession = { [weak self] session in self?.open(session) }
+        menuBar.onQuit = { NSApp.terminate(nil) }
+        menuBar.onOpenDiagnostics = { [weak self] in self?.diagnostics.show() }
+        menuBar.onOpenPreferences = { [weak self] in self?.settingsWindow.show() }
+    }
+
+    /// Exercises the whole delivery path — hook binary, socket, reducer, sound,
+    /// notification — without involving a real agent.
+    ///
+    /// Runs the *installed* hook rather than synthesising an event internally,
+    /// so a failure here implicates the same binary and the same socket an agent
+    /// would use. A test that bypassed them could pass while the real path was
+    /// broken.
+    private func sendTestEvent() {
+        let hook = RuntimePaths().hookBinary
+        guard FileManager.default.isExecutableFile(atPath: hook.path) else {
+            logger.error("no installed hook binary to test with")
+            return
+        }
+
+        let session = "codestatus-test-\(UInt32.random(in: 0..<0xFFFFFF))"
+        let payloads = [
+            #"{"session_id":"\#(session)","hook_event_name":"UserPromptSubmit","cwd":"\#(NSHomeDirectory())","prompt_id":"t1"}"#,
+            #"{"session_id":"\#(session)","hook_event_name":"Stop","cwd":"\#(NSHomeDirectory())","prompt_id":"t1"}"#,
+        ]
+
+        Task.detached {
+            for payload in payloads {
+                let process = Process()
+                process.executableURL = hook
+                process.arguments = ["--provider", "claude-code"]
+                let input = Pipe()
+                process.standardInput = input
+                guard (try? process.run()) != nil else { continue }
+                input.fileHandleForWriting.write(Data(payload.utf8))
+                try? input.fileHandleForWriting.close()
+                process.waitUntilExit()
+                try? await Task.sleep(for: .milliseconds(700))
+            }
+        }
+    }
+
+    private func open(_ session: AgentSession) {
+        opener.open(session)
+    }
+
+    private func applySettings() {
+        notifications.preferences = settings.notificationPreferences
+        hud.isEnabled = settings.hudEnabled
+    }
+
+    /// Removes our entries from both agents' configuration.
+    ///
+    /// Offered in Settings rather than only in an uninstaller script because the
+    /// case that actually harms people is deleting the app and leaving the hook
+    /// entries behind.
+    private func uninstallHooks() {
+        let paths = RuntimePaths()
+        do {
+            _ = try ClaudeHookInstaller(paths: paths).uninstall()
+            _ = try CodexHookInstaller(paths: paths).uninstall()
+            logger.info("removed CodeStatus hook entries")
+        } catch {
+            logger.error("uninstall failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Keeps the hook binary at a stable path that agents' configs point at.
+    ///
+    /// Copied out of the bundle rather than referenced inside it, and refreshed
+    /// whenever the versions differ. That is what lets the user move the app to
+    /// a different folder, or update it, without any agent configuration having
+    /// to be rewritten — and it means a deleted app leaves behind a hook that
+    /// exits immediately rather than a dangling path that errors on every call.
+    private func installHookBinaryIfNeeded() {
+        let paths = RuntimePaths()
+        // Built into Contents/Helpers, which is where a signed helper executable
+        // belongs. `url(forAuxiliaryExecutable:)` only looks in Contents/MacOS,
+        // so the path is constructed rather than asked for.
+        let candidates = [
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/codestatus-hook"),
+            Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/codestatus-hook"),
+        ]
+        guard let bundled = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0.path)
+        }) else {
+            logger.notice("no bundled hook binary; running from a development build")
+            return
+        }
+
+        do {
+            try paths.createDirectories()
+            let installed = paths.hookBinary
+            let manager = FileManager.default
+
+            if manager.fileExists(atPath: installed.path) {
+                let current = try? Data(contentsOf: installed)
+                let candidate = try? Data(contentsOf: bundled)
+                if current == candidate { return }
+                try manager.removeItem(at: installed)
+            }
+            try manager.copyItem(at: bundled, to: installed)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: installed.path)
+            logger.info("installed hook binary at \(installed.path, privacy: .public)")
+        } catch {
+            logger.error("hook binary install failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
+
+/// Launch-at-login, backed by the public `SMAppService` API.
+enum LoginItem {
+    /// `.requiresApproval` counts as on: registration succeeded and macOS is
+    /// merely waiting for the user to confirm in System Settings. Treating it as
+    /// off would make the toggle snap back and look broken.
+    static var isEnabled: Bool {
+        let status = SMAppService.mainApp.status
+        return status == .enabled || status == .requiresApproval
+    }
+
+    static func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+}
