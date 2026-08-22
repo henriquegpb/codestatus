@@ -225,6 +225,17 @@ final class SessionDaemon {
         registry.update(session)
     }
 
+    /// Subscribes to a session's process so its exit is noticed even when the
+    /// agent never sends `SessionEnd`.
+    private func watchForExit(_ session: AgentSession) {
+        guard let pid = session.pid else { return }
+        if let startTime = session.processStartTime {
+            _ = processWatcher?.watch(pid: pid, startTime: startTime, provider: session.provider)
+        } else {
+            _ = processWatcher?.watch(pid: pid, provider: session.provider)
+        }
+    }
+
     /// Walks up from a directory looking for a `.git` entry.
     ///
     /// Deliberately a filesystem walk rather than shelling out to `git`: this
@@ -267,6 +278,11 @@ final class SessionDaemon {
                 }
             case .sweepProcesses:
                 processWatcher?.sweep()
+                // kqueue registrations die with the process that made them, so
+                // anything restored from a snapshot needs re-subscribing.
+                for session in registry.all where session.state.isActive {
+                    watchForExit(session)
+                }
             }
         }
         publish()
@@ -275,10 +291,14 @@ final class SessionDaemon {
     private func restoreSnapshot() {
         switch persistence.load() {
         case .restored(let snapshot):
-            for session in snapshot.sessions where session.state.isActive {
-                registry.update(session)
-            }
-            logger.info("restored \(snapshot.sessions.count) sessions")
+            let inspector = ProcessInspector()
+            let live = StatePersistence.filterToLiveSessions(
+                snapshot.sessions.filter { $0.state.isActive },
+                isAlive: { inspector.isAlive(pid: $0, startTime: $1) }
+            )
+            for session in live { registry.update(session) }
+            let dropped = snapshot.sessions.count - live.count
+            logger.info("restored \(live.count) sessions, dropped \(dropped) that no longer exist")
         case .none:
             break
         case .discarded(let reason):

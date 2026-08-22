@@ -66,6 +66,32 @@ public struct StatePersistence: Sendable {
         self.paths = paths
     }
 
+    /// Drops restored sessions whose process is gone.
+    ///
+    /// A snapshot records what was true when we last ran, and a session that
+    /// finished its turn is stored as `free` — which is correct at the time and
+    /// a lie the moment the agent exits without a `SessionEnd` we were around to
+    /// hear. Restoring it unchecked puts a permanently `free` row in the HUD for
+    /// a session that ended hours ago, and the user clicks it and nothing
+    /// happens.
+    ///
+    /// Discarded rather than reported as `ended`: the session did not end just
+    /// now, it ended while we were not running, and announcing it would be
+    /// exactly the stale notification the wake path exists to suppress.
+    ///
+    /// A session we cannot check at all is also dropped. A phantom `free` costs
+    /// the user a click and their trust; re-discovering a live session costs the
+    /// process watcher one sweep.
+    public static func filterToLiveSessions(
+        _ sessions: [AgentSession],
+        isAlive: (_ pid: pid_t, _ startTime: UInt64) -> Bool
+    ) -> [AgentSession] {
+        sessions.filter { session in
+            guard let pid = session.pid, let startTime = session.processStartTime else { return false }
+            return isAlive(pid, startTime)
+        }
+    }
+
     public func save(_ sessions: [AgentSession], now: Date = Date()) throws {
         try paths.createDirectories()
         let snapshot = Snapshot(savedAt: now, sessions: sessions)
