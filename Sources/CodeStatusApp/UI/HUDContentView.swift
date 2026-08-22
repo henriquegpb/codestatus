@@ -148,7 +148,12 @@ private struct ExpandedSessionList: View {
                 rows
             }
         }
-        .padding(drawsBackground ? 12 : 4)
+        // Horizontal inset is the same either way: text pinned to the edge of a
+        // popover reads as clipped, and the popover supplies no inset of its own.
+        // Only the vertical differs, because the floating panel draws the card
+        // the content sits in while the popover already has one.
+        .padding(.horizontal, 14)
+        .padding(.vertical, drawsBackground ? 12 : 8)
         .background {
             if drawsBackground {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.regularMaterial)
