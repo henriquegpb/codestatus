@@ -562,7 +562,12 @@ struct HookInstallerTests {
             let elements = try #require(surgeon.arrayElements(atPath: ["hooks", event]))
             #expect(elements.count == 1)
             #expect(elements[0].contains("\"--provider\", \"codex\""))
-            #expect(elements[0].contains("\"async\": true"))
+            // Deliberately absent. Codex 0.138.0 prints "skipping async hook:
+            // async hooks are not supported yet" and discards the whole entry,
+            // so writing the flag makes the entire installation invisible —
+            // /hooks reports no hooks installed at all. Its documentation says
+            // otherwise; the shipped build is the authority.
+            #expect(!elements[0].contains("async"))
         }
         #expect(!surgeon.contains(path: ["hooks", "Notification"]))
 

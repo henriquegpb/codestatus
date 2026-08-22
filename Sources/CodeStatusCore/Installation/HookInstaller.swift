@@ -152,11 +152,33 @@ public struct HookInstaller: Sendable {
 
     /// One element of an event's array. `matcher` is deliberately omitted, which
     /// both agents read as "every invocation".
+    /// Whether this agent honours `async: true`.
+    ///
+    /// Claude Code does, verified by running it. Codex does not: 0.138.0 prints
+    /// `skipping async hook: async hooks are not supported yet` and discards the
+    /// entry outright, so writing the flag there does not merely fail to help —
+    /// it makes the whole installation invisible, with `/hooks` reporting no
+    /// hooks installed at all.
+    ///
+    /// Its documentation lists `async` as supported. The shipped build is the
+    /// authority.
+    public var supportsAsyncHooks: Bool {
+        switch provider {
+        case .claudeCode: return true
+        case .codex, .generic: return false
+        }
+    }
+
     public func entryJSON() -> String {
         let command = JSONSurgeon.quoted(hookBinary.path)
+        // Without `async`, the hook runs on the agent's critical path, so the
+        // "never blocks" guarantee for Codex rests on the hook being bounded
+        // instead of on the agent enforcing it: ~10 ms typical, a 50 ms cap on
+        // the socket, and this timeout as the backstop.
+        let asyncField = supportsAsyncHooks ? ",\"async\":true" : ""
         return "{\"hooks\":[{\"type\":\"command\",\"command\":\(command),"
             + "\"args\":[\"--provider\",\"\(providerArgument)\"],"
-            + "\"timeout\":\(Self.timeoutSeconds),\"async\":true}]}"
+            + "\"timeout\":\(Self.timeoutSeconds)\(asyncField)}]}"
     }
 
     // MARK: - Ownership

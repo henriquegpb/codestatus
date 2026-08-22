@@ -741,3 +741,37 @@ struct InstalledStateTests {
         #expect(elements.filter(claude.installer.isOurEntry).count == 1)
     }
 }
+
+/// `async: true` is the structural guarantee that our hook cannot sit on the
+/// agent's critical path — but only where the agent honours it. Claude Code
+/// does; Codex 0.138.0 skips any entry carrying it and reports no hooks
+/// installed, which made a correct-looking install do nothing at all.
+@Suite("The async flag follows what each agent actually accepts")
+struct AsyncHookSupportTests {
+
+    private func installer(_ provider: AgentProvider, home: URL) -> HookInstaller {
+        HookInstaller(
+            paths: RuntimePaths(home: home),
+            provider: provider,
+            targetURL: home.appendingPathComponent("cfg.json"),
+            events: ["Stop"]
+        )
+    }
+
+    @Test("Claude Code entries are async, so the agent enforces non-blocking")
+    func claudeIsAsync() {
+        let home = URL(fileURLWithPath: "/tmp/cs-flag-\(getuid())")
+        let entry = installer(.claudeCode, home: home).entryJSON()
+        #expect(entry.contains("\"async\":true"))
+    }
+
+    @Test("Codex entries omit async, because it discards entries that carry it")
+    func codexOmitsAsync() {
+        let home = URL(fileURLWithPath: "/tmp/cs-flag-\(getuid())")
+        let entry = installer(.codex, home: home).entryJSON()
+        #expect(!entry.contains("\"async\""))
+        // The timeout stays: without async it is the only backstop against a
+        // wedged hook holding up a turn.
+        #expect(entry.contains("\"timeout\":\(HookInstaller.timeoutSeconds)"))
+    }
+}

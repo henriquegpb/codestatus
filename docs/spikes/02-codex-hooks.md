@@ -70,6 +70,27 @@ suggesting the mechanism is on its way out in favour of a newer `[notifications]
 `hooks/list failed in TUI`, and `--dangerously-bypass-hook-trust`. A newly installed command
 hook does not execute until the user reviews and trusts it.
 
+### `async` is documented but not implemented
+
+The documentation lists `async` as a supported field. Codex 0.138.0-alpha.7 does not implement
+it, and does not merely ignore it:
+
+```
+⚠ skipping async hook in ~/.codex/hooks.json: async hooks are not supported yet
+```
+
+It discards the whole entry. An installation that looked correct on disk was invisible to the
+agent, and `/hooks` reported no hooks installed for any event — which reads as "the file was
+never written" rather than "every entry was rejected".
+
+Claude Code's support for `async` was verified by running it. Codex's was taken from the docs.
+That asymmetry is the whole mistake: the shipped build is the authority, and it is cheap to ask.
+
+The consequence is a real downgrade, recorded rather than glossed. For Claude Code, "never blocks
+the agent" is structural — an async hook *cannot* sit on the critical path. For Codex it is not:
+the hook runs synchronously, and the guarantee rests on it being bounded instead. Roughly 10 ms
+typical, a 50 ms cap on the socket connect, and `timeout: 5` as the backstop.
+
 ## Limitations
 
 - Spike 4 is **not done**: Codex inside VS Code runs as `app-server`, not as the TUI, and it has
