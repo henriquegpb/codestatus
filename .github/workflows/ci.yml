@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version && sw_vers
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test
+
+      - name: Build universal app bundle
+        run: scripts/build-app.sh --sign
+
+      # The privacy guarantee is the project's central claim, so it is checked
+      # in CI as an artefact property rather than only as a unit test: the
+      # shipped hook must not link Foundation, because a general-purpose parser
+      # is exactly how conversation content would end up in memory.
+      - name: Assert the hook does not link Foundation
+        run: |
+          BIN="dist/CodeStatus.app/Contents/Helpers/codestatus-hook"
+          otool -L "$BIN"
+          if otool -L "$BIN" | grep -q Foundation; then
+            echo "::error::codestatus-hook links Foundation; see CONTRIBUTING.md rule 1"
+            exit 1
+          fi
+
+      - name: Assert the app bundle is universal
+        run: |
+          ARCHS=$(lipo -archs dist/CodeStatus.app/Contents/MacOS/CodeStatusApp)
+          echo "architectures: $ARCHS"
+          [[ "$ARCHS" == *arm64* && "$ARCHS" == *x86_64* ]] || {
+            echo "::error::not a universal binary: $ARCHS"; exit 1; }
+
+      # No dependency may be added without a deliberate change here.
+      - name: Assert there are no third-party dependencies
+        run: |
+          if grep -q '\.package(' Package.swift; then
+            echo "::error::Package.swift declares a dependency; see CONTRIBUTING.md rule 5"
+            exit 1
+          fi

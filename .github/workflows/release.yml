@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          [[ -z "$VERSION" ]] && VERSION="${GITHUB_REF_NAME#v}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: swift test
+
+      # Secrets required, configured once in repository settings:
+      #   SIGNING_CERTIFICATE_P12   base64 of the Developer ID Application .p12
+      #   SIGNING_CERTIFICATE_PASSWORD
+      #   SIGNING_IDENTITY          e.g. "Developer ID Application: Name (TEAMID)"
+      #   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD (app-specific password)
+      - name: Import signing certificate
+        env:
+          CERTIFICATE: ${{ secrets.SIGNING_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 900 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Build signed universal app
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/build-app.sh --sign "${{ secrets.SIGNING_IDENTITY }}"
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          # Notarization takes a zip; the ticket is stapled to the .app itself,
+          # and the .dmg is built afterwards so it carries a stapled bundle.
+          ditto -c -k --keepParent dist/CodeStatus.app "$RUNNER_TEMP/CodeStatus.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/CodeStatus.zip" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" \
+            --wait --timeout 30m
+          xcrun stapler staple dist/CodeStatus.app
+          xcrun stapler validate dist/CodeStatus.app
+          spctl --assess --type execute --verbose=4 dist/CodeStatus.app
+
+      - name: Build DMG
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/make-dmg.sh "$VERSION"
+
+      - name: Notarize and staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          DMG="dist/CodeStatus-${{ steps.version.outputs.value }}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$PASSWORD" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CodeStatus-${{ steps.version.outputs.value }}.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
