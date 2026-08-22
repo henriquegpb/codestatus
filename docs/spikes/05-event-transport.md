@@ -46,16 +46,34 @@ end.
 
 ### It is fast, and Foundation is genuinely absent
 
+Measured on the **universal binary that actually ships**, which is not the same thing as the
+binary a plain `swift build` produces — a distinction that cost us a false claim, below.
+
 | Measurement | Value |
 |---|---|
-| Wall time per invocation, 20 KB payload, no daemon | **7.0 ms** |
-| Binary size | **83 KB** |
+| Wall time per invocation, no daemon | **9.6 ms** |
+| Same binary if Foundation is linked | 12.0 ms |
+| Binary size, universal | **225 KB** (83 KB for a single-architecture slice) |
 | Linked libraries | `libSystem.B.dylib`, `libswiftCore.dylib`, `libswiftDarwin.dylib` |
 
-The 7 ms includes shell `echo`, a pipe, and full process spawn — the hook's own share is a
-fraction of it. `otool -L` confirms Foundation is not linked, so the "Foundation-free" claim is
-verified rather than assumed. For comparison, the closest prior art ships a bash script that
-spawns `bash`, `jq`, and `nc` for every event.
+The figure includes shell `echo`, a pipe, and full process spawn — the hook's own share is a
+fraction of it. For comparison, the closest prior art ships a bash script that spawns `bash`,
+`jq`, and `nc` for every event.
+
+### The Foundation-free claim was briefly false in the shipped artifact
+
+`otool -L` on `.build/release/codestatus-hook` showed no Foundation, and that was taken as proof.
+It was proof about the wrong file. `swift build --arch arm64 --arch x86_64`, which is how the
+bundle was assembled, routes through xcbuild — and xcbuild links Foundation into every product
+whether or not it imports one. The binary inside `CodeStatus.app` therefore linked Foundation
+while the one being measured did not, costing about 2.4 ms on every single tool call.
+
+The CI assertion that greps `otool -L` for Foundation is what caught it, on its first run against
+the real bundle. The build now compiles each architecture with `--triple`, which uses SwiftPM's
+own build system and links only what is imported, then joins them with `lipo`.
+
+The lesson is narrow and worth keeping: a property asserted about a build artefact has to be
+asserted about *the artefact that ships*, not a convenient neighbour of it.
 
 ### `sun_path` is a real constraint, and it bit immediately
 

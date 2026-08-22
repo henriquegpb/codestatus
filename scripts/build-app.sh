@@ -27,14 +27,31 @@ if [[ "${1:-}" == "--sign" ]]; then
     [[ -n "${2:-}" ]] && IDENTITY="$2"
 fi
 
-echo "==> Building universal binaries ($CONFIG)"
-# One invocation per product: `swift build` honours only the last --product it
-# is given, so passing both silently builds only the second.
+TRIPLES=(arm64-apple-macosx14.0 x86_64-apple-macosx14.0)
+STAGE="dist/universal"
+
+# Built per-triple and lipo'd together rather than with `swift build --arch`.
+#
+# `--arch` routes through xcbuild, which links Foundation into every product
+# whether or not it imports it -- so the hook shipped in the bundle linked
+# Foundation while the arm64-only build did not, quietly costing the startup
+# time the whole scanner design exists to protect. `--triple` uses SwiftPM's
+# own build system, which links only what is imported.
+#
+# One invocation per product as well: `swift build` honours only the last
+# --product it is given, so passing both silently builds just the second.
+echo "==> Building ($CONFIG) for ${TRIPLES[*]}"
+rm -rf "$STAGE"; mkdir -p "$STAGE"
 for product in CodeStatusApp codestatus-hook; do
-    swift build -c "$CONFIG" --arch arm64 --arch x86_64 --product "$product"
+    slices=()
+    for triple in "${TRIPLES[@]}"; do
+        swift build -c "$CONFIG" --triple "$triple" --product "$product"
+        slices+=("$(swift build -c "$CONFIG" --triple "$triple" --show-bin-path)/$product")
+    done
+    lipo -create "${slices[@]}" -output "$STAGE/$product"
 done
 
-BIN_DIR="$(swift build -c "$CONFIG" --arch arm64 --arch x86_64 --show-bin-path)"
+BIN_DIR="$STAGE"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"

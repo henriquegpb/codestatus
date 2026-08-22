@@ -55,7 +55,7 @@ root, workspace name, and host application.
 
 ## Status
 
-**In development.** The engine is built and covered by 151 tests; onboarding and settings are not written yet.
+**In development.** The engine is built and covered by 184 tests. The interface works and is in daily use; its appearance has not been reviewed on hardware other than one machine.
 
 | Area | State |
 |---|---|
@@ -65,8 +65,8 @@ root, workspace name, and host application.
 | Config installers (byte-preserving), process watcher | done, tested |
 | Notch HUD, menu bar item, notifications, session opening | built, needs visual verification on hardware |
 | Diagnostics report and sanitised export | done, tested |
-| Onboarding flow, settings window | not started |
-| Signed and notarised release pipeline | scripted, not yet exercised end to end |
+| Onboarding flow, settings window | done |
+| Signed and notarised release pipeline | scripted; notarisation not yet exercised |
 
 Verified working end to end on a real machine: the app launches as a menu bar
 companion, creates its runtime directories `0700`, listens on the socket, installs
@@ -106,7 +106,7 @@ Why the gaps:
 Claude Code / Codex
         │  official lifecycle hook (async, never blocking)
         ▼
-codestatus-hook          ← metadata allowlist applied here, 83 KB, no Foundation
+codestatus-hook          ← metadata allowlist applied here, 225 KB universal, no Foundation
         │  one NDJSON line over a Unix domain socket
         ▼
 CodeStatus daemon
