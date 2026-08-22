@@ -11,7 +11,11 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-15
+    # Pinned to the toolchain the project is developed against. macos-15 images
+    # ship a much older Xcode, and building on a different compiler than we ship
+    # means CI is testing something other than the product -- which is how the
+    # first red build here happened.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
