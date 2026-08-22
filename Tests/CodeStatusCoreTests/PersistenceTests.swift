@@ -233,6 +233,9 @@ struct StatePersistenceTests {
         "cwd", "gitRoot", "repositoryName", "workspaceName",
         "hostApplication", "hostBundleIdentifier",
         "sourceAdapter", "capabilities", "controlTarget", "lastError", "clock",
+        // Reviewed: a bool recording only whether an agent has ever sent us an
+        // event for this session. Carries nothing about what was said.
+        "hasHookEvidence",
     ]
 
     private func makeSession(now: Date) -> AgentSession {

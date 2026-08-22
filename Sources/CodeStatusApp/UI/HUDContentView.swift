@@ -90,12 +90,49 @@ private struct ExpandedSessionList: View {
 
     private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if model.sessions.isEmpty {
+                Text(model.unreportedCount > 0 ? "No sessions reporting yet." : "No agent sessions.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
             ForEach(model.sessions) { session in
                 SessionRow(session: session, now: model.now, onOpen: onOpen, onDismiss: onDismiss)
                 if session.id != model.sessions.last?.id {
                     Divider().opacity(0.15)
                 }
             }
+            if model.unreportedCount > 0 {
+                unreportedFootnote
+            }
+        }
+    }
+
+    /// Running agents that have never sent us an event.
+    ///
+    /// A count rather than rows: they are real, so hiding them entirely would be
+    /// its own dishonesty, but each is a session whose state we would have to
+    /// invent. Almost always this means hooks were installed after the session
+    /// started — both agents read their hook configuration once, at session
+    /// start — so the fix is to start a new one, and saying so is more useful
+    /// than a row that says Unknown forever.
+    private var unreportedFootnote: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !model.sessions.isEmpty { Divider().opacity(0.15).padding(.bottom, 6) }
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Text(
+                    model.unreportedCount == 1
+                        ? "1 other session isn’t reporting yet"
+                        : "\(model.unreportedCount) other sessions aren’t reporting yet"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .help("They started before hooks were installed. Agents read their hook configuration at session start, so a new session will report normally.")
+            .padding(.vertical, 3)
         }
     }
 

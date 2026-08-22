@@ -79,3 +79,74 @@ struct RestoreLivenessTests {
         #expect(live.isEmpty)
     }
 }
+
+/// The HUD answers one question: how many agents are working, free, or waiting
+/// on you. A session found by scanning processes proves something is running
+/// and says nothing about what it is doing, so letting it into that answer
+/// makes the answer partly guesswork.
+@Suite("Only sessions that have reported are counted")
+struct ReportingSessionTests {
+
+    private func hookEvent(_ kind: HookEventKind, session: String, id: String) -> AgentEvent {
+        AgentEvent(
+            id: EventID(id), provider: .claudeCode, kind: kind, source: .hook,
+            timestamp: Date(timeIntervalSince1970: 100), providerSessionID: session,
+            providerTurnID: "t1"
+        )
+    }
+
+    @Test("A process we merely found is tracked but not listed or counted")
+    func discoveredSessionsAreNotListed() {
+        var registry = SessionRegistry()
+        _ = registry.adopt(provider: .claudeCode, pid: 4242, startTime: 1, now: Date())
+
+        #expect(registry.all.count == 1, "it must still be tracked, for exit detection")
+        #expect(registry.visible.isEmpty)
+        #expect(registry.unreported.count == 1)
+        #expect(registry.counts().isEmpty)
+    }
+
+    @Test("It joins the list the moment its agent reports")
+    func reportingPromotesASession() {
+        var registry = SessionRegistry()
+        _ = registry.ingest(hookEvent(.userPromptSubmit, session: "s1", id: "e1"))
+
+        #expect(registry.visible.count == 1)
+        #expect(registry.unreported.isEmpty)
+        #expect(registry.counts()[.busy] == 1)
+    }
+
+    /// The exact shape that put four permanent grey rows in the HUD: three
+    /// conversation tabs the VS Code extension had restored, none of which had
+    /// run a turn since hooks were installed, next to one real session.
+    @Test("Four found processes and one live session read as one session")
+    func theActualScreenshot() {
+        var registry = SessionRegistry()
+        for index in 0..<4 {
+            _ = registry.adopt(
+                provider: .claudeCode, pid: pid_t(500 + index), startTime: 1, now: Date()
+            )
+        }
+        _ = registry.ingest(hookEvent(.stop, session: "real", id: "e1"))
+
+        #expect(registry.visible.count == 1)
+        #expect(registry.visible.first?.state == .free)
+        #expect(registry.counts() == [.free: 1])
+        #expect(registry.unreported.count == 4, "the four are reported as a count, not hidden")
+    }
+
+    @Test("Process exit still removes a session nobody ever reported on")
+    func exitStillAppliesToUnreportedSessions() {
+        var registry = SessionRegistry()
+        _ = registry.adopt(provider: .claudeCode, pid: 4242, startTime: 1, now: Date())
+
+        let exit = AgentEvent(
+            id: EventID("x"), provider: .claudeCode, kind: .processExited, source: .process,
+            timestamp: Date(timeIntervalSince1970: 200), pid: 4242
+        )
+        _ = registry.ingest(exit)
+
+        #expect(registry.unreported.isEmpty)
+        #expect(registry.all.first?.state == .ended)
+    }
+}

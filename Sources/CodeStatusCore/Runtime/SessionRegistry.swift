@@ -44,16 +44,34 @@ public struct SessionRegistry: Sendable {
         sessions[id]
     }
 
-    /// Sessions that still occupy a slot, ordered for display: the ones needing
-    /// the user first, then busy, then the rest, most recently changed first.
+    /// Sessions the HUD lists, ordered by how much they want the user: the ones
+    /// needing attention first, then busy, then the rest, most recently changed
+    /// first.
+    ///
+    /// Only sessions an agent has actually reported on. A session found by
+    /// scanning processes proves something is running; it says nothing about
+    /// what that something is doing, and listing it as `Unknown` forever dilutes
+    /// the one question the HUD exists to answer. Those are still tracked, still
+    /// watched for exit, and still adopt a real state the moment a hook arrives
+    /// — see ``unreported``.
     public var visible: [AgentSession] {
         sessions.values
-            .filter { $0.state.isActive }
+            .filter { $0.state.isActive && $0.hasHookEvidence }
             .sorted { lhs, rhs in
                 let l = displayPriority(lhs.state), r = displayPriority(rhs.state)
                 if l != r { return l > r }
                 return lhs.stateChangedAt > rhs.stateChangedAt
             }
+    }
+
+    /// Live sessions no agent has reported on yet.
+    ///
+    /// Surfaced as a count rather than hidden: silently omitting a running agent
+    /// would be its own kind of dishonesty. Usually this means hooks were
+    /// installed after the session started, since both agents read their hook
+    /// configuration once at session start.
+    public var unreported: [AgentSession] {
+        sessions.values.filter { $0.state.isActive && !$0.hasHookEvidence }
     }
 
     private func displayPriority(_ state: AgentState) -> Int {
@@ -67,10 +85,15 @@ public struct SessionRegistry: Sendable {
         }
     }
 
-    /// Counts per HUD bucket. `ended` sessions are excluded.
+    /// Counts per HUD bucket.
+    ///
+    /// Ended sessions are excluded, and so are sessions no agent has reported
+    /// on. "Two busy" has to mean two agents we watched go busy; padding it with
+    /// processes we merely found would make the number partly guesswork, which
+    /// is the one thing these counters must never be.
     public func counts() -> [StateBucket: Int] {
         var result: [StateBucket: Int] = [:]
-        for session in sessions.values where session.state.isActive {
+        for session in sessions.values where session.state.isActive && session.hasHookEvidence {
             result[session.state.bucket, default: 0] += 1
         }
         return result

@@ -68,7 +68,9 @@ final class MenuBarController {
                     .font: NSFont.systemFont(ofSize: 11),
                 ]
             )
-            button.toolTip = "CodeStatus — no active agent sessions"
+            button.toolTip = model.unreportedCount > 0
+                ? "CodeStatus — \(model.unreportedCount) session(s) found but not reporting"
+                : "CodeStatus — no active agent sessions"
             return
         }
 

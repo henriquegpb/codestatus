@@ -141,6 +141,7 @@ public enum StateReducer {
         updated.clock.advance(with: event)
         updated.lastEventAt = event.timestamp
         updated.stateConfidence = confidence(for: event)
+        if event.source == .hook { updated.hasHookEvidence = true }
         applyEnrichment(from: event, to: &updated)
 
         guard target != session.state else {

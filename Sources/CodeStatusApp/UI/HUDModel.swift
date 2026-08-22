@@ -15,6 +15,10 @@ public final class HUDModel {
 
     public private(set) var sessions: [AgentSession] = []
     public private(set) var counts: [StateBucket: Int] = [:]
+    /// Live sessions no agent has reported on yet. Shown as a footnote rather
+    /// than as rows, so a running agent is never silently omitted but also never
+    /// pretends to have a state.
+    public private(set) var unreportedCount: Int = 0
     /// Ticks so durations re-render without every view owning a timer.
     public private(set) var now: Date = Date()
 
@@ -22,6 +26,11 @@ public final class HUDModel {
 
     public var hasActiveSessions: Bool {
         !sessions.isEmpty
+    }
+
+    /// Whether there is anything at all to show, reportable or not.
+    public var hasAnything: Bool {
+        !sessions.isEmpty || unreportedCount > 0
     }
 
     public var free: Int { counts[.free] ?? 0 }
@@ -33,6 +42,7 @@ public final class HUDModel {
     public func apply(_ registry: SessionRegistry, now: Date = Date()) {
         sessions = registry.visible
         counts = registry.counts()
+        unreportedCount = registry.unreported.count
         self.now = now
     }
 
@@ -58,7 +68,8 @@ public final class HUDModel {
 
         case .expanded:
             let rows = max(1, min(sessions.count, 8))
-            return CGSize(width: 320, height: CGFloat(rows) * 52 + 24)
+            let footnote: CGFloat = unreportedCount > 0 ? 28 : 0
+            return CGSize(width: 320, height: CGFloat(rows) * 52 + 24 + footnote)
         }
     }
 }

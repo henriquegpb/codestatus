@@ -139,6 +139,14 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
     public var controlTarget: ControlTarget
     public var lastError: String?
 
+    /// Whether an official hook event has ever arrived for this session.
+    ///
+    /// The distinction the HUD is built on. Process discovery proves a session
+    /// *exists*; only a hook says what it is doing. A session we found but have
+    /// never heard from cannot contribute to "how many are busy" — counting it
+    /// would answer that question with a number that is partly guesswork.
+    public var hasHookEvidence: Bool = false
+
     /// Ordering guard; not part of the user-visible model.
     public var clock: LogicalClock
 
