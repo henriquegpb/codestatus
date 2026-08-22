@@ -2,9 +2,19 @@ import CodeStatusCore
 import SwiftUI
 
 /// What the HUD draws, in both shapes.
+///
+/// The same view serves two very different containers, which is why the two
+/// flags exist. The floating panel is a transparent, borderless window sized by
+/// `NotchGeometry`: it has no surface of its own and its content must fill it.
+/// The popover already draws a surface and sizes itself to what it is given, so
+/// there the content has to hug and must not draw a second background — a card
+/// inside a card reads as a layout bug, which is exactly how it looked.
 struct HUDContentView: View {
     @Bindable var model: HUDModel
     @Environment(\.hudPresentation) private var presentation
+
+    var drawsBackground: Bool = true
+    var fillsAvailableSpace: Bool = true
 
     var onOpen: ((AgentSession) -> Void)?
     var onDismiss: ((AgentSession) -> Void)?
@@ -12,11 +22,21 @@ struct HUDContentView: View {
     var body: some View {
         Group {
             switch presentation {
-            case .compact: CompactCounters(model: model)
-            case .expanded: ExpandedSessionList(model: model, onOpen: onOpen, onDismiss: onDismiss)
+            case .compact:
+                CompactCounters(model: model)
+            case .expanded:
+                ExpandedSessionList(
+                    model: model,
+                    drawsBackground: drawsBackground,
+                    onOpen: onOpen,
+                    onDismiss: onDismiss
+                )
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(
+            maxWidth: fillsAvailableSpace ? .infinity : nil,
+            maxHeight: fillsAvailableSpace ? .infinity : nil
+        )
     }
 }
 
@@ -59,10 +79,16 @@ private struct CompactCounters: View {
 /// The full list, shown on hover or click.
 private struct ExpandedSessionList: View {
     @Bindable var model: HUDModel
+    var drawsBackground: Bool = true
     var onOpen: ((AgentSession) -> Void)?
     var onDismiss: ((AgentSession) -> Void)?
 
-    var body: some View {
+    /// Beyond this the list scrolls instead of growing. Twelve sessions is
+    /// already an unusual day; a window that keeps growing past it would run off
+    /// the screen with no way to reach the bottom rows.
+    private static let maximumVisibleRows = 12
+
+    private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(model.sessions) { session in
                 SessionRow(session: session, now: model.now, onOpen: onOpen, onDismiss: onDismiss)
@@ -71,11 +97,26 @@ private struct ExpandedSessionList: View {
                 }
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.regularMaterial)
-        )
+    }
+
+    var body: some View {
+        Group {
+            // Only scroll once there is something to scroll. A ScrollView has no
+            // intrinsic height, so wrapping unconditionally would force the
+            // popover to a fixed size and reintroduce the empty space below a
+            // short list that this whole shape exists to avoid.
+            if model.sessions.count > Self.maximumVisibleRows {
+                ScrollView { rows }.frame(height: 560)
+            } else {
+                rows
+            }
+        }
+        .padding(drawsBackground ? 12 : 4)
+        .background {
+            if drawsBackground {
+                RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.regularMaterial)
+            }
+        }
     }
 }
 

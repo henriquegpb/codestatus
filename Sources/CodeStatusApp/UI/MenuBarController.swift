@@ -40,7 +40,10 @@ final class MenuBarController {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.contentSize = NSSize(width: 320, height: 240)
+        // No contentSize: the hosting controller reports its own preferred size
+        // and the popover follows it, so the window is exactly as tall as the
+        // number of sessions. A fixed size left a small card marooned in a large
+        // empty window whenever fewer sessions were running than it allowed for.
     }
 
     // MARK: - Rendering
@@ -111,15 +114,22 @@ final class MenuBarController {
             popover.performClose(nil)
             return
         }
-        popover.contentViewController = NSHostingController(
+        let hosting = NSHostingController(
             rootView: HUDContentView(
                 model: model,
+                // The popover already draws a surface; a second one inside it
+                // reads as a card floating in an empty window.
+                drawsBackground: false,
+                fillsAvailableSpace: false,
                 onOpen: { [weak self] in self?.onOpenSession?($0) },
                 onDismiss: { [weak self] in self?.onDismissSession?($0) }
             )
             .environment(\.hudPresentation, .expanded)
             .frame(width: 320)
         )
+        // Lets the popover size itself to the list rather than to a constant.
+        hosting.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = hosting
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         // Without this the popover appears behind the frontmost app, because
         // CodeStatus is an accessory app that never activates on its own.
