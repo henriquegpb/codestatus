@@ -1,0 +1,54 @@
+# Third-party attributions
+
+CodeStatus has no third-party runtime dependencies — `Package.swift` declares none, and the
+shipped binaries link only libSystem and the Swift runtime.
+
+It does, however, adapt small pieces of code from other MIT-licensed projects that solved the
+same problems first. Those projects and the specific debts are recorded here.
+
+---
+
+## techgocodingnow/agentbuddy
+
+<https://github.com/techgocodingnow/agentbuddy> — MIT License, Copyright (c) techgocodingnow.
+
+**Adapted:** the `sockaddr_un` construction in `Sources/codestatus-hook/Transport.swift`
+(`connectUnixSocket`). Filling `sun_path` from Swift requires binding a fixed-size C tuple
+through `withUnsafeMutablePointer` + `withMemoryRebound`, which is easy to get subtly wrong;
+their `EventSender.writeToSocket` has a correct version of it.
+
+**Changed:** their `connect()` is blocking with no timeout, which would hang the hook — and so
+delay the agent — if the daemon ever wedged. Ours is a non-blocking `connect()` followed by a
+bounded `poll()`, plus `SO_SNDTIMEO` on the write.
+
+---
+
+## bacongravy/your-turn
+
+<https://github.com/bacongravy/your-turn> — MIT License, Copyright (c) bacongravy.
+
+**Adapted:**
+
+- The AppleScript automation-denied error code `-1743`, used to distinguish a denied Automation
+  grant from other scripting failures so "Open session" can fall back to plain app activation
+  instead of failing silently.
+- The observation that `SMAppService` status `.requiresApproval` should be treated as enabled,
+  so the launch-at-login toggle does not snap back while macOS waits for the user to approve it
+  in System Settings.
+- The idea of suppressing a notification when the frontmost terminal's *selected tab* matches
+  the event's TTY — per-tab rather than per-app, so the user is not pinged about the session
+  they are looking at.
+
+---
+
+## Projects studied but not copied from
+
+Read during design; no code taken.
+
+- **sokojh/ai-notifier-swift** (MIT) — notification and click-to-focus patterns.
+- **unoryota/ai-notify** (MIT) — agent hook wiring across providers.
+- **idonecc/Coding-Done-Alert** (MIT) — documented the macOS 26 constraints that
+  `UNUserNotificationCenter` requires a signing identity, and that cross-Space window
+  manipulation regressed on Tahoe.
+- **cfngc4594/agent-notify** — **no license file**, so nothing was copied. Its idea of showing
+  the user a diff of a config change before applying it informed our installer's preview mode.
