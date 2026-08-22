@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  CodeStatus ships UNSANDBOXED, deliberately, and is therefore not a Mac App
+	  Store product. Two core capabilities are incompatible with the App Sandbox:
+
+	    1. proc_pidinfo(PROC_PIDVNODEPATHINFO) to read a session's working
+	       directory, which is how a session gets its project name.
+	    2. Apple Events to Terminal.app to find the tab matching a session's TTY.
+
+	  It is Developer ID signed with the hardened runtime instead.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+
+	<!-- Required under the hardened runtime to send Apple Events at all. The
+	     user still has to grant Automation for Terminal in System Settings;
+	     this entitlement only makes the request possible. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>CodeStatus</string>
+	<key>CFBundleDisplayName</key>
+	<string>CodeStatus</string>
+	<key>CFBundleIdentifier</key>
+	<string>co.codestatus.CodeStatus</string>
+	<key>CFBundleExecutable</key>
+	<string>CodeStatusApp</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+
+	<!-- Menu bar / background companion: no Dock icon, no default window. A
+	     preference can open a full window on demand, which does not require
+	     changing this. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- Shown when the user is first asked to allow controlling Terminal. This
+	     is requested lazily, on the first "Open session" click for a terminal
+	     session — never during onboarding. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>CodeStatus needs permission to control Terminal so it can bring you back to the exact tab a coding agent is running in. It only reads which tab matches your session and selects it; it never sends text or keystrokes to your terminal.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT Licensed. Copyright © 2026 Henrique Barone.</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>
