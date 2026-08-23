@@ -36,8 +36,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-body {
+/* The page's black lives on the root element so the gradient layer, which sits
+   at a negative z-index, is not painted over by the body's own background. */
+html {
   background: var(--background);
+}
+
+body {
+  background: transparent;
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;

@@ -147,7 +147,9 @@ export function HudPreview({ className = "" }: { className?: string }) {
   return (
     <div
       ref={containerRef}
-      className={`relative overflow-hidden rounded-2xl border border-line bg-panel ${className}`}
+      // Translucent rather than solid: the panel sits on the gradient, and an
+      // opaque block there would read as a hole punched in the background.
+      className={`relative overflow-hidden rounded-2xl border border-line bg-black/45 backdrop-blur-xl ${className}`}
     >
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-line px-6 py-4 font-mono text-sm">
         <Count state="free" n={count("free")} label="free" />
