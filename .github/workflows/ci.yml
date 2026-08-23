@@ -1,9 +1,14 @@
 name: CI
 
+# The website is a separate deliverable with its own workflow, and this job
+# builds a universal app bundle on a macos-26 image -- far too expensive to run
+# for a change that only touches marketing copy.
 on:
   push:
     branches: [main]
+    paths-ignore: ["website/**"]
   pull_request:
+    paths-ignore: ["website/**"]
 
 concurrency:
   group: ci-${{ github.ref }}
