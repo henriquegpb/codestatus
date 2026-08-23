@@ -17,6 +17,7 @@ import wordmark from "../../public/wordmark.svg";
 import mark from "../../public/mark.svg";
 import { SITE } from "@/lib/site";
 import { HudPreview } from "@/components/hud-preview";
+import { GrainientField } from "@/components/site-background";
 import { Section, Claims } from "@/components/section";
 import { CapabilityMatrix } from "@/components/capability-matrix";
 
@@ -37,7 +38,9 @@ const METADATA = [
 export default function Home() {
   return (
     <>
-      <header className="w-full border-b border-line">
+      {/* Solid black rather than transparent: the gradient running under the
+          wordmark made the logo compete with the field behind it. */}
+      <header className="w-full border-b border-line bg-background">
         <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <Link href="/" aria-label="CodeStatus — home">
             <Image src={wordmark} alt="CodeStatus" height={26} priority />
@@ -253,7 +256,14 @@ CodeStatus daemon
         </Section>
 
         <section className="mx-auto max-w-5xl px-6 py-20">
-          <div className="rounded-2xl border border-line bg-panel px-8 py-12 text-center">
+          <div className="relative overflow-hidden rounded-2xl border border-line bg-background text-center">
+            {/* The same field as the hero, cropped to the card. It sits before
+                the content in the DOM and the content is positioned, so the
+                content paints over it without either needing a z-index. */}
+            <div aria-hidden className="pointer-events-none absolute inset-0">
+              <GrainientField />
+            </div>
+            <div className="relative px-8 py-12">
             <Image
               src={mark}
               alt=""
@@ -278,10 +288,11 @@ CodeStatus daemon
               </a>
               <a
                 href={`${SITE.repo}#building`}
-                className="rounded-lg border border-line px-5 py-2.5 text-sm font-medium transition-colors hover:bg-background"
+                className="rounded-lg border border-line px-5 py-2.5 text-sm font-medium backdrop-blur-sm transition-colors hover:bg-black/40"
               >
                 Build from source
               </a>
+            </div>
             </div>
           </div>
         </section>
