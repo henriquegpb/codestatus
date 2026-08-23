@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/*
+ * Dark only, deliberately. The logo is a black plate with a thin white wordmark
+ * and a glowing green dot; on a light page it would read as a sticker pasted on
+ * top. --background is pure black so the plate inside the SVGs disappears into
+ * the page and the mark sits flush.
+ */
+:root {
+  color-scheme: dark;
+
+  --background: #000000;
+  --foreground: #f2f3f5;
+  --muted: #8b8f9c;
+  --line: #1c1d21;
+  --panel: #0b0c0e;
+
+  /* The brand green is also the "free" state -- the same dot the HUD shows. */
+  --accent: #4ee000;
+  --free: #4ee000;
+  --busy: #f0b429;
+  --needs: #ff5c3d;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-panel: var(--panel);
+  --color-accent: var(--accent);
+  --color-free: var(--free);
+  --color-busy: var(--busy);
+  --color-needs: var(--needs);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The bloom around the mark's dot, reused for every state dot on the page so
+ * the HUD preview and the logo are visibly the same object.
+ */
+.dot-glow {
+  box-shadow: 0 0 0.5em -0.05em currentColor, 0 0 1.1em -0.1em currentColor;
+}
+
+/* --- HUD preview motion ------------------------------------------------- */
+
+/* A session arrives from the left and leaves to the right -- the list reads as
+   a conveyor rather than a set of rows blinking in and out. */
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-2.5rem);
+  }
+}
+
+@keyframes row-out {
+  to {
+    opacity: 0;
+    transform: translateX(2.5rem);
+  }
+}
+
+/* Busy is the only state that is actually doing something, so it is the only
+   one that breathes. */
+@keyframes dot-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* One chain: slide in from the edge, hold, slide back out. Replayed by changing
+   the element key, so the toast needs no timers of its own. */
+@keyframes toast-in-out {
+  0% {
+    opacity: 0;
+    transform: translateX(1.5rem) scale(0.96);
+  }
+  9%,
+  80% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(1.5rem) scale(0.98);
+  }
+}
+
+.row-in {
+  animation: row-in 480ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.row-out {
+  animation: row-out 440ms cubic-bezier(0.55, 0, 0.85, 0.3) forwards;
+}
+
+.dot-busy {
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+
+.toast {
+  animation: toast-in-out 3000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-in,
+  .row-out,
+  .dot-busy,
+  .toast {
+    animation: none;
+  }
+}
+
+::selection {
+  background: var(--accent);
+  color: #000;
+}
