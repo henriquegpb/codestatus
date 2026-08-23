@@ -13,6 +13,12 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 
+# Website (Next.js) — the rest lives in website/.gitignore
+website/node_modules/
+website/.next/
+website/out/
+website/.vercel
+
 # macOS
 .DS_Store
 
