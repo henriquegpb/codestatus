@@ -232,10 +232,10 @@ CodeStatus daemon
               </dd>
             </div>
             <div>
-              <dt className="text-busy">Codex in VS Code</dt>
+              <dt className="text-free">Codex in VS Code</dt>
               <dd className="mt-1 text-muted">
-                Runs as <code className="font-mono">app-server</code>; hook
-                delivery unconfirmed.
+                Runs as <code className="font-mono">app-server</code>, and
+                delivers the same hooks the CLI does.
               </dd>
             </div>
             <div>
