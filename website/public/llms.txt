@@ -1,0 +1,54 @@
+# CodeStatus
+
+> A free, open-source macOS menu bar app that tracks every Claude Code and Codex
+> session running on your Mac and notifies you the moment one finishes, needs
+> approval, or is waiting for input.
+
+Run several coding agents at once and keep working. CodeStatus shows how many
+sessions are busy, free, or need you, and clicking one returns you to its
+terminal tab or VS Code workspace.
+
+- Site: https://codestatus.app
+- Source: https://github.com/henriquegpb/codestatus
+- Download (macOS 14+): https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg
+- Licence: MIT. No account, no server, no telemetry.
+
+## What problem it solves
+
+Someone running multiple AI coding agents has no way to know which ones are
+still working without switching to each terminal and looking. CodeStatus answers
+that from the menu bar, and interrupts you only when an agent is actually done
+or actually blocked on you.
+
+## Supported agents
+
+- Claude Code — CLI and the VS Code extension.
+- Codex — the CLI and Codex in VS Code, which runs as an app-server and delivers
+  the same hooks. Codex requires the user to trust hooks once via `/hooks`.
+
+Cursor, Windsurf and Gemini CLI are not supported: the design depends on official
+lifecycle hooks, and those are the agents that expose them in the form required.
+
+## How it determines state
+
+State comes from the agents' own lifecycle hooks — SessionStart, UserPromptSubmit,
+PreToolUse, PostToolUse, PermissionRequest, Stop, SessionEnd — and never from CPU
+usage. An agent waiting on a network response burns no CPU; one running a long
+build burns plenty, so CPU says nothing about whether a person is needed. Process
+observation is used only for discovery and for detecting that a session really
+exited. When nothing has been reported, a session reads as unknown rather than
+being announced as finished.
+
+## Privacy
+
+There is no network code in the product. A small hook binary runs inside each
+agent, copies an allowlisted set of metadata — session id, provider, event name,
+timestamp, pid, tty, working directory, git root, workspace, host app — and sends
+one line over a local Unix domain socket. Prompts, responses, tool input and file
+contents are never read.
+
+## Known limitations
+
+- Codex cannot report that it is waiting for free-text input: no such event exists.
+- CodeStatus does not send prompts to sessions it did not launch itself.
+- macOS 14 or later, Apple Silicon and Intel.

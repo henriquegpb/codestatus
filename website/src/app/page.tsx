@@ -22,6 +22,7 @@ import { GrainientField } from "@/components/site-background";
 import { Section, Claims } from "@/components/section";
 import { CapabilityMatrix } from "@/components/capability-matrix";
 import { IconSwapButton } from "@/components/icon-swap-button";
+import { Faq } from "@/components/faq";
 
 /** Exactly what the hook binary is allowed to copy. */
 const METADATA = [
@@ -245,6 +246,14 @@ CodeStatus daemon
               </dd>
             </div>
           </dl>
+        </Section>
+
+        <Section
+          id="faq"
+          eyebrow="Questions"
+          title="What people ask before installing it."
+        >
+          <Faq />
         </Section>
 
         <section className="mx-auto max-w-5xl px-6 py-20">
