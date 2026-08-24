@@ -92,4 +92,11 @@ fi
 
 echo "==> Built $APP"
 echo "    architectures: $(lipo -archs "$APP/Contents/MacOS/CodeStatusApp")"
-echo "    signature:     $(codesign -dv "$APP" 2>&1 | grep -m1 Signature || echo 'unsigned')"
+# Read the description once, then match against it in memory. Piping codesign
+# into `grep -m1` looks equivalent and is not: grep exits at the first match,
+# codesign dies of SIGPIPE, and under `pipefail` the pipeline reports 141 — so
+# the `|| echo 'unsigned'` fallback fires *after* the real value was printed
+# and every correctly signed build is labelled unsigned in the release log.
+DESCRIPTION="$(codesign -dv "$APP" 2>&1 || true)"
+SIGNATURE="$(awk '/Signature/ { print; exit }' <<<"$DESCRIPTION")"
+echo "    signature:     ${SIGNATURE:-unsigned}"
