@@ -40,6 +40,20 @@ final class SessionDaemon {
     /// than on every sweep that re-observes the same silent session.
     private var didWarnAboutCodexTrust = false
 
+    /// Sessions the user dismissed by hand, so process discovery does not
+    /// immediately re-adopt what they just cleared away.
+    private var dismissed: Set<SessionID> = []
+
+    private var ticksSinceReap = 0
+
+    /// Seconds between liveness sweeps of the registry.
+    ///
+    /// A backstop, not the mechanism: `EVFILT_PROC` reports an exit the instant
+    /// it happens, and this only catches sessions we somehow never subscribed
+    /// to. Checking a handful of pids is a sysctl each, so the interval is
+    /// about keeping the work invisible rather than about accuracy.
+    private static let reapInterval = 10
+
     /// How long an ended session stays visible before leaving the counters, so
     /// the user sees it finish rather than having a row vanish under the cursor.
     private let endedLinger: TimeInterval = 4
@@ -169,10 +183,62 @@ final class SessionDaemon {
 
     private func apply(_ event: AgentEvent) {
         let results = registry.ingest(event)
+        // A hook event is the session telling us it is alive. Honouring a
+        // dismissal past that point would mean hiding a working session, which
+        // is the same failure as showing a dead one with the sign flipped.
+        if event.source == .hook, !dismissed.isEmpty {
+            for result in results {
+                if case .sessionAdded(let id) = result { dismissed.remove(id) }
+                if case .sessionChanged(let transition) = result {
+                    dismissed.remove(transition.sessionID)
+                }
+            }
+        }
         handle(results)
     }
 
+    /// Ends any session whose process is no longer there.
+    ///
+    /// Belt to the kqueue's braces. Every path that should have caught these is
+    /// now wired, but a session whose exit we miss is invisible-by-omission in
+    /// the worst way: it claims an agent is busy when nothing is running, which
+    /// is precisely the report that makes the whole app untrustworthy.
+    private func reapDeadSessions() {
+        let inspector = ProcessInspector()
+        for session in registry.all where session.state.isActive {
+            guard let pid = session.pid else { continue }
+            let alive = session.processStartTime.map {
+                inspector.isAlive(pid: pid, startTime: $0)
+            } ?? (inspector.snapshot(pid: pid) != nil)
+            guard !alive else { continue }
+            logger.info("reaping \(session.id.rawValue, privacy: .public): its process is gone")
+            apply(ProcessWatcher.exitEvent(
+                pid: pid,
+                startTime: session.processStartTime ?? 0,
+                provider: session.provider
+            ))
+        }
+    }
+
+    /// Removes a session because the user asked us to stop watching it.
+    ///
+    /// Suppressed from process discovery afterwards, or the next sweep would
+    /// put it straight back. A later *hook* event un-dismisses it: that is the
+    /// session demonstrably alive and talking to us, and continuing to hide it
+    /// would be the same dishonesty as showing a phantom.
+    func dismiss(_ session: AgentSession) {
+        dismissed.insert(session.id)
+        handle(registry.remove(session.id))
+        publish()
+    }
+
     private func adopt(_ process: AgentProcess) {
+        // Identity is (provider, pid, start time), so this suppresses the exact
+        // process the user dismissed and not a later one that reuses its pid.
+        let identity = SessionID.process(
+            process.provider, pid: process.pid, startTime: process.startTime
+        )
+        guard !dismissed.contains(identity) else { return }
         // Enters `.unknown`, never a guessed state: we know a session exists but
         // have no evidence of what it is doing.
         guard let added = registry.adopt(
@@ -214,9 +280,28 @@ final class SessionDaemon {
 
     /// Fills in the details a hook cannot know: tty, working directory, git root,
     /// and which application is hosting the session.
+    ///
+    /// Also the point where we start watching the process, because this is the
+    /// moment we learn its start time — and a session is only safely watchable
+    /// once we can tell its process from a recycled pid.
     private func enrich(pid: pid_t) {
         let inspector = ProcessInspector()
-        guard let snapshot = inspector.snapshot(pid: pid) else { return }
+        guard let snapshot = inspector.snapshot(pid: pid) else {
+            // Already gone. A hook can reach us after its process has died —
+            // the event is queued, delivered, and only then do we look — and
+            // without this the session would sit in the list forever, since
+            // nothing else was ever going to tell us about a process we never
+            // subscribed to.
+            if let session = registry.all.first(where: { $0.pid == pid }), session.state.isActive {
+                logger.info("pid \(pid, privacy: .public) was already gone when we went to enrich it")
+                apply(ProcessWatcher.exitEvent(
+                    pid: pid,
+                    startTime: session.processStartTime ?? 0,
+                    provider: session.provider
+                ))
+            }
+            return
+        }
         guard var session = registry.all.first(where: { $0.pid == pid }) else { return }
 
         session.parentPID = snapshot.parentPID
@@ -235,6 +320,11 @@ final class SessionDaemon {
             session.controlTarget.workspacePath = root ?? cwd
         }
         registry.update(session)
+        // The fix for phantom rows. Sessions born from a hook event used to
+        // reach here and never subscribe to anything, so an agent that exited
+        // without sending SessionEnd — `codex exec` does exactly this — stayed
+        // Busy until the next sleep/wake reconciliation, which might be never.
+        watchForExit(session)
     }
 
     /// Subscribes to a session's process so its exit is noticed even when the
@@ -330,6 +420,11 @@ final class SessionDaemon {
 
     private func tick() {
         let now = Date()
+        ticksSinceReap += 1
+        if ticksSinceReap >= Self.reapInterval {
+            ticksSinceReap = 0
+            reapDeadSessions()
+        }
         let removed = registry.pruneEnded(olderThan: endedLinger, now: now)
         guard removed.isEmpty else {
             publish(now)

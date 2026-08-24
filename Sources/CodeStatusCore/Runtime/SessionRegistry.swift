@@ -70,8 +70,20 @@ public struct SessionRegistry: Sendable {
     /// would be its own kind of dishonesty. Usually this means hooks were
     /// installed after the session started, since both agents read their hook
     /// configuration once at session start.
+    ///
+    /// One process can hold two entries here — process discovery keys a session
+    /// on `(provider, pid, startTime)` while a hook keys it on the agent's own
+    /// session id, so the same agent is adopted twice before the hook arrives.
+    /// Counting both reported an agent as silent while its own row sat directly
+    /// above saying otherwise, which reads as the app inventing sessions. The
+    /// pid is what proves they are the same process.
     public var unreported: [AgentSession] {
-        sessions.values.filter { $0.state.isActive && !$0.hasHookEvidence }
+        let reportingPIDs = Set(sessions.values.filter(\.hasHookEvidence).compactMap(\.pid))
+        return sessions.values.filter { session in
+            guard session.state.isActive, !session.hasHookEvidence else { return false }
+            guard let pid = session.pid else { return true }
+            return !reportingPIDs.contains(pid)
+        }
     }
 
     private func displayPriority(_ state: AgentState) -> Int {
@@ -238,5 +250,17 @@ public struct SessionRegistry: Sendable {
         guard sessions[session.id] != nil else { return }
         sessions[session.id] = session
         indexPID(for: session)
+    }
+
+    /// Drops one session immediately, without waiting for it to end and linger.
+    ///
+    /// For the user dismissing a row by hand. Separate from ``pruneEnded`` on
+    /// purpose: that one collects sessions the agent told us were finished,
+    /// where this one throws away a session we may still believe is running.
+    @discardableResult
+    public mutating func remove(_ id: SessionID) -> [RegistryEvent] {
+        guard let session = sessions.removeValue(forKey: id) else { return [] }
+        if let pid = session.pid, pidIndex[pid] == id { pidIndex.removeValue(forKey: pid) }
+        return [.sessionRemoved(id)]
     }
 }

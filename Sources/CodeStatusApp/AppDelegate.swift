@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applySettings()
 
         menuBar.onOpenSession = { [weak self] session in self?.open(session) }
+        // Declared and passed into the row since the popover was written, but
+        // never connected to anything, so the × was decoration.
+        menuBar.onDismissSession = { [weak self] session in self?.daemon.dismiss(session) }
         menuBar.onQuit = { NSApp.terminate(nil) }
         menuBar.onOpenDiagnostics = { [weak self] in self?.diagnostics.show() }
         menuBar.onOpenPreferences = { [weak self] in self?.settingsWindow.show() }

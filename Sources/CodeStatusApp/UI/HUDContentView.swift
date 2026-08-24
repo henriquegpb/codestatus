@@ -351,17 +351,12 @@ private struct SessionRow: View {
                     .font(.system(size: 11, weight: .medium))
             }
 
-            // Present but disabled until a session is one CodeStatus launched
-            // and controls through a PTY. Showing it greyed out with a reason is
-            // more honest than hiding a capability that exists for other
-            // sessions — see the capability matrix in the README.
-            if !session.capabilities.contains(.canSendPrompt) {
-                Image(systemName: "text.cursor")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.quaternary)
-                    .help("CodeStatus can only send prompts to sessions it started itself.")
-            }
-
+            // No prompt affordance here yet. There was a greyed-out one, on the
+            // reasoning that showing a disabled capability beats hiding one
+            // other sessions have — but `canSendPrompt` is granted nowhere, so
+            // it appeared on every row forever and read as broken rather than
+            // honest. It belongs here again when a session can actually take a
+            // prompt, and not before.
             Button {
                 onDismiss?(session)
             } label: {
