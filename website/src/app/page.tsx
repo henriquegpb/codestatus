@@ -15,11 +15,13 @@ import {
 } from "lucide-react";
 import wordmark from "../../public/wordmark.svg";
 import mark from "../../public/mark.svg";
+import githubMark from "../../public/GitHub.svg";
 import { SITE } from "@/lib/site";
 import { HudPreview } from "@/components/hud-preview";
 import { GrainientField } from "@/components/site-background";
 import { Section, Claims } from "@/components/section";
 import { CapabilityMatrix } from "@/components/capability-matrix";
+import { IconSwapButton } from "@/components/icon-swap-button";
 
 /** Exactly what the hook binary is allowed to copy. */
 const METADATA = [
@@ -45,20 +47,12 @@ export default function Home() {
           <Link href="/" aria-label="CodeStatus — home">
             <Image src={wordmark} alt="CodeStatus" height={26} priority />
           </Link>
-          <div className="flex items-center gap-6 text-sm text-muted">
-            <a className="transition-colors hover:text-foreground" href="#how">
-              How it works
-            </a>
-            <a
-              className="transition-colors hover:text-foreground"
-              href="#capabilities"
-            >
-              Capabilities
-            </a>
-            <a className="transition-colors hover:text-foreground" href={SITE.repo}>
-              GitHub
-            </a>
-          </div>
+          <IconSwapButton
+            href={SITE.repo}
+            label="Star on GitHub"
+            size="sm"
+            icon={<Image src={githubMark} alt="" width={15} height={15} aria-hidden />}
+          />
         </nav>
       </header>
 
@@ -81,19 +75,17 @@ export default function Home() {
           </p>
 
           <div className="mt-9 flex flex-wrap items-center gap-4">
-            <a
+            <IconSwapButton
               href={SITE.download}
-              className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-black transition-shadow hover:shadow-[0_0_28px_-6px_var(--accent)]"
-            >
-              <Download className="size-4" strokeWidth={2} aria-hidden />
-              Download for macOS
-            </a>
-            <a
+              label="Download for macOS"
+              variant="primary"
+              icon={<Download className="size-4" strokeWidth={2} />}
+            />
+            <IconSwapButton
               href={SITE.repo}
-              className="rounded-lg border border-line px-5 py-2.5 text-sm font-medium transition-colors hover:bg-panel"
-            >
-              View source
-            </a>
+              label="View source"
+              icon={<Image src={githubMark} alt="" width={16} height={16} aria-hidden />}
+            />
             <span className="font-mono text-xs text-muted">
               {SITE.requirements}
             </span>
@@ -279,19 +271,17 @@ CodeStatus daemon
               rest of your config untouched.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-4">
-              <a
+              <IconSwapButton
                 href={SITE.download}
-                className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-black transition-shadow hover:shadow-[0_0_28px_-6px_var(--accent)]"
-              >
-                <Download className="size-4" strokeWidth={2} aria-hidden />
-                Download for macOS
-              </a>
-              <a
+                label="Download for macOS"
+                variant="primary"
+                icon={<Download className="size-4" strokeWidth={2} />}
+              />
+              <IconSwapButton
                 href={`${SITE.repo}#building`}
-                className="rounded-lg border border-line px-5 py-2.5 text-sm font-medium backdrop-blur-sm transition-colors hover:bg-black/40"
-              >
-                Build from source
-              </a>
+                label="Build from source"
+                icon={<Image src={githubMark} alt="" width={16} height={16} aria-hidden />}
+              />
             </div>
             </div>
           </div>
