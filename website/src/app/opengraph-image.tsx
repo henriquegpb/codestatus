@@ -52,7 +52,7 @@ export default function OpengraphImage() {
           </span>
           <span style={{ fontSize: 32, color: "#8b8f9c", maxWidth: 900 }}>
             A native macOS presence layer for coding agents. Busy, free, or needs
-            you — around the notch.
+            you — in your menu bar.
           </span>
         </div>
       </div>

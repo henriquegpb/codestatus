@@ -62,7 +62,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "CodeStatus — Stop watching AI work",
     description:
-      "A native macOS presence layer for coding agents. Busy, free, or needs you — around the notch.",
+      "A native macOS presence layer for coding agents. Busy, free, or needs you — in your menu bar.",
   },
 };
 
