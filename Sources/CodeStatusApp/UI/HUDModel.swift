@@ -19,6 +19,9 @@ public final class HUDModel {
     /// than as rows, so a running agent is never silently omitted but also never
     /// pretends to have a state.
     public private(set) var unreportedCount: Int = 0
+    /// Why those sessions are silent, when we can tell. Set by the daemon,
+    /// which is the only thing that knows when the hooks were installed.
+    public private(set) var unreportedDiagnosis = UnreportedDiagnosis()
     /// Ticks so durations re-render without every view owning a timer.
     public private(set) var now: Date = Date()
 
@@ -39,10 +42,15 @@ public final class HUDModel {
     public var indeterminate: Int { counts[.indeterminate] ?? 0 }
 
     /// Replaces the snapshot. Called on every registry change.
-    public func apply(_ registry: SessionRegistry, now: Date = Date()) {
+    public func apply(
+        _ registry: SessionRegistry,
+        diagnosis: UnreportedDiagnosis = UnreportedDiagnosis(),
+        now: Date = Date()
+    ) {
         sessions = registry.visible
         counts = registry.counts()
         unreportedCount = registry.unreported.count
+        unreportedDiagnosis = diagnosis
         self.now = now
     }
 

@@ -62,6 +62,13 @@ final class MenuBarController {
             (.needsYou, model.needsYou), (.indeterminate, model.indeterminate),
         ].filter { $0.1 > 0 }
 
+        // Deliberately not badged in the bar itself: an icon beside the counts
+        // competes with them for the one glance the menu bar gets. The popover
+        // carries the warning, and the tooltip carries it here.
+        let codexNote = model.unreportedDiagnosis.codexAwaitingTrust > 0
+            ? "Codex isn’t reporting — run /hooks in Codex to trust CodeStatus"
+            : nil
+
         if groups.isEmpty {
             button.attributedTitle = NSAttributedString(
                 string: "●",
@@ -70,9 +77,10 @@ final class MenuBarController {
                     .font: NSFont.systemFont(ofSize: 11),
                 ]
             )
-            button.toolTip = model.unreportedCount > 0
-                ? "CodeStatus — \(model.unreportedCount) session(s) found but not reporting"
-                : "CodeStatus — no active agent sessions"
+            button.toolTip = codexNote
+                ?? (model.unreportedCount > 0
+                    ? "CodeStatus — \(model.unreportedCount) session(s) found but not reporting"
+                    : "CodeStatus — no active agent sessions")
             return
         }
 
@@ -95,9 +103,12 @@ final class MenuBarController {
             ))
         }
         button.attributedTitle = title
-        button.toolTip = groups
-            .map { "\($0.1) \($0.0.label)" }
-            .joined(separator: ", ")
+        button.toolTip = [
+            groups.map { "\($0.1) \($0.0.label)" }.joined(separator: ", "),
+            codexNote,
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
     }
 
     // MARK: - Interaction

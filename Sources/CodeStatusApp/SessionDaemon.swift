@@ -29,6 +29,17 @@ final class SessionDaemon {
     private var tickTimer: Timer?
     private var powerObservers: [(NotificationCenter, NSObjectProtocol)] = []
 
+    /// When each provider's hook configuration was written.
+    ///
+    /// Cached rather than read per publish: this is a file read, and publish
+    /// runs on every event. It only changes when we install or uninstall, and
+    /// both of those paths reload it.
+    private var hooksInstalledAt: [AgentProvider: Date] = [:]
+
+    /// So the "Codex is not reporting" notice is posted once per run rather
+    /// than on every sweep that re-observes the same silent session.
+    private var didWarnAboutCodexTrust = false
+
     /// How long an ended session stays visible before leaving the counters, so
     /// the user sees it finish rather than having a row vanish under the cursor.
     private let endedLinger: TimeInterval = 4
@@ -56,6 +67,7 @@ final class SessionDaemon {
             logger.error("could not create runtime directories: \(error.localizedDescription, privacy: .public)")
         }
 
+        reloadInstallReceipts()
         restoreSnapshot()
         startSocketServer()
         startProcessWatcher()
@@ -319,23 +331,76 @@ final class SessionDaemon {
     private func tick() {
         let now = Date()
         let removed = registry.pruneEnded(olderThan: endedLinger, now: now)
-        if removed.isEmpty {
-            model.tick(now)
-        } else {
+        guard removed.isEmpty else {
             publish(now)
+            return
+        }
+        // The diagnosis depends on elapsed time, not just on registry changes:
+        // a silent session crosses the settling period while nothing else
+        // happens, and publish alone would never notice. Re-deriving it each
+        // second is a walk over the handful of sessions that are not reporting.
+        if currentDiagnosis(now) != model.unreportedDiagnosis {
+            publish(now)
+        } else {
+            model.tick(now)
         }
     }
 
+    private func currentDiagnosis(_ now: Date) -> UnreportedDiagnosis {
+        UnreportedDiagnosis.diagnose(
+            sessions: registry.unreported,
+            hooksInstalledAt: hooksInstalledAt,
+            now: now
+        )
+    }
+
     private func publish(_ now: Date = Date()) {
-        model.apply(registry, now: now)
+        let diagnosis = currentDiagnosis(now)
+        model.apply(registry, diagnosis: diagnosis, now: now)
+        warnAboutCodexTrustIfNeeded(diagnosis)
         onRegistryChanged?()
     }
 
     /// Re-scans after onboarding installs hooks, so sessions that were already
     /// running show up without waiting for the next safety sweep.
     func refreshAdapters() {
+        // Receipts first: an install that just happened changes what the
+        // silence of every existing session means.
+        reloadInstallReceipts()
         processWatcher?.sweep()
         publish()
+    }
+
+    /// Reads when each provider's hooks were installed.
+    ///
+    /// A missing receipt is not an error — it means we never installed for that
+    /// provider, and the diagnosis correctly declines to explain anything.
+    private func reloadInstallReceipts() {
+        let store = InstallReceiptStore(paths: paths)
+        let receipts = store.load()
+        var installed: [AgentProvider: Date] = [:]
+        installed[.claudeCode] = receipts[ClaudeHookInstaller(paths: paths).settingsURL.path]?.installedAt
+        installed[.codex] = receipts[CodexHookInstaller(paths: paths).hooksURL.path]?.installedAt
+        hooksInstalledAt = installed
+    }
+
+    /// Tells the user once that Codex is running but silent.
+    ///
+    /// Codex fails this case silently — it works normally and simply never
+    /// reports — so without this the only symptom is CodeStatus appearing to do
+    /// nothing, which reads as CodeStatus being broken. The popover carries the
+    /// same message persistently; this is what reaches someone who is not
+    /// looking at it.
+    private func warnAboutCodexTrustIfNeeded(_ diagnosis: UnreportedDiagnosis) {
+        guard diagnosis.codexAwaitingTrust > 0, !didWarnAboutCodexTrust else { return }
+        didWarnAboutCodexTrust = true
+        logger.notice("codex sessions running with untrusted hooks")
+        notifications.postSetupNotice(
+            title: "Codex isn’t reporting",
+            body: "Codex only runs hooks you have trusted. Run /hooks in Codex "
+                + "and trust the CodeStatus entries.",
+            identifier: "co.codestatus.setup.codex-untrusted"
+        )
     }
 
     // MARK: - Reading, for other surfaces

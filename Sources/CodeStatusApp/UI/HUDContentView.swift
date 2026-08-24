@@ -59,7 +59,11 @@ struct HUDContentView: View {
                     Divider().opacity(0.15)
                 }
             }
-            if model.unreportedCount > 0 {
+            if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
+                CodexTrustCallout(count: model.unreportedDiagnosis.codexAwaitingTrust)
+                    .padding(.top, model.sessions.isEmpty ? 0 : 8)
+            }
+            if unexplainedCount > 0 {
                 unreportedFootnote
             }
         }
@@ -71,7 +75,18 @@ struct HUDContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Running agents that have never sent us an event.
+    /// Silent sessions the ``UnreportedDiagnosis`` explains on its own, plus any
+    /// it cannot explain at all.
+    ///
+    /// Sessions awaiting Codex trust are excluded because they get the callout
+    /// above instead: counting them twice would say the same thing in two
+    /// voices, one of which understates it.
+    private var unexplainedCount: Int {
+        model.unreportedDiagnosis.predatesHooks + model.unreportedDiagnosis.unexplained
+    }
+
+    /// Running agents that have never sent us an event, and that we have no
+    /// specific advice about.
     ///
     /// A count rather than rows: they are real, so hiding them entirely would be
     /// its own dishonesty, but each is a session whose state we would have to
@@ -87,9 +102,9 @@ struct HUDContentView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 Text(
-                    model.unreportedCount == 1
+                    unexplainedCount == 1
                         ? "1 other session isn’t reporting yet"
-                        : "\(model.unreportedCount) other sessions aren’t reporting yet"
+                        : "\(unexplainedCount) other sessions aren’t reporting yet"
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -97,6 +112,59 @@ struct HUDContentView: View {
             .help("They started before hooks were installed. Agents read their hook configuration at session start, so a new session will report normally.")
             .padding(.vertical, 3)
         }
+    }
+}
+
+// MARK: - Codex trust
+
+/// Says that Codex is running and silent, and what to do about it.
+///
+/// Loud on purpose. This is the one failure the app cannot recover from on its
+/// own and cannot even detect without being told: Codex refuses to run hooks it
+/// has not been trusted with, and it refuses *silently*, so the symptom is an
+/// app that appears to do nothing. A grey footnote is what this used to be, and
+/// it read as "nothing is happening" rather than "something is wrong".
+private struct CodexTrustCallout: View {
+    let count: Int
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(
+                    count == 1
+                        ? "A Codex session isn’t reporting"
+                        : "\(count) Codex sessions aren’t reporting"
+                )
+                .font(.system(size: 12, weight: .semibold))
+
+                // Concatenated rather than laid out in an HStack: stacked, each
+                // fragment wrapped inside its own box, which broke the sentence
+                // into a ragged column. Joined into one Text it flows and wraps
+                // as the single sentence it is, and the monospaced run keeps its
+                // own font through the concatenation.
+                (
+                    Text("Run ")
+                        + Text("/hooks")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        + Text(" in Codex and trust the CodeStatus entries.")
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.orange.opacity(0.12))
+        }
+        .help(CodexHookInstaller.trustInstructions)
+        .accessibilityElement(children: .combine)
     }
 }
 
