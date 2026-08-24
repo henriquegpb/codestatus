@@ -131,13 +131,18 @@ struct DiagnosticsBuilder {
             version: codexCLI.flatMap(Self.version(of:))
         ))
 
+        // App-server delivery is confirmed: ~/.codex/logs_2.sqlite records
+        // `codex_app_server … hook/started` and `hook/completed` for entries
+        // written to ~/.codex/hooks.json. The trust caveat is the CLI's.
         let codexExtension = Self.findVSCodeExtension(prefix: "openai.chatgpt")
         adapters.append(AdapterStatus(
             name: "Codex for VS Code",
-            state: codexExtension == nil ? .notInstalled : .needsVerification,
+            state: codexExtension == nil
+                ? .notInstalled
+                : (codexInstalled ? .needsVerification : .notConfigured),
             detail: codexExtension == nil
                 ? nil
-                : "Runs as app-server; hook delivery in that mode is unconfirmed",
+                : "Runs as app-server, and delivers hooks from ~/.codex/hooks.json in that mode",
             version: codexExtension
         ))
 
