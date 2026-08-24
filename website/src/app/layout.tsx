@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { SITE } from "@/lib/site";
 import { SiteBackground } from "@/components/site-background";
@@ -118,6 +119,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <StructuredData schema={SOFTWARE_SCHEMA} />
         <SiteBackground />
         {children}
+        {/*
+         * Page views and nothing else. The app itself ships no telemetry and the
+         * page says so in as many words; that promise is about what CodeStatus
+         * does on your Mac, not about whether the marketing site counts visits.
+         */}
+        <Analytics />
       </body>
     </html>
   );
