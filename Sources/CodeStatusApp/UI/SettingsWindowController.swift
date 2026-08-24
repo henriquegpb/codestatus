@@ -16,13 +16,11 @@ final class SettingsModel {
         static let soundEnabled = "co.codestatus.soundEnabled"
         static let notificationsEnabled = "co.codestatus.notificationsEnabled"
         static let onlyWhenUnfocused = "co.codestatus.onlyWhenUnfocused"
-        static let hudEnabled = "co.codestatus.hudEnabled"
     }
 
     var soundEnabled: Bool { didSet { persist() } }
     var notificationsEnabled: Bool { didSet { persist() } }
     var onlyWhenUnfocused: Bool { didSet { persist() } }
-    var hudEnabled: Bool { didSet { persist() } }
     var launchAtLogin: Bool
 
     /// Nil when not muted; otherwise when the quiet period ends.
@@ -36,12 +34,10 @@ final class SettingsModel {
             Key.soundEnabled: true,
             Key.notificationsEnabled: true,
             Key.onlyWhenUnfocused: true,
-            Key.hudEnabled: true,
         ])
         soundEnabled = defaults.bool(forKey: Key.soundEnabled)
         notificationsEnabled = defaults.bool(forKey: Key.notificationsEnabled)
         onlyWhenUnfocused = defaults.bool(forKey: Key.onlyWhenUnfocused)
-        hudEnabled = defaults.bool(forKey: Key.hudEnabled)
         launchAtLogin = LoginItem.isEnabled
     }
 
@@ -50,7 +46,6 @@ final class SettingsModel {
         defaults.set(soundEnabled, forKey: Key.soundEnabled)
         defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled)
         defaults.set(onlyWhenUnfocused, forKey: Key.onlyWhenUnfocused)
-        defaults.set(hudEnabled, forKey: Key.hudEnabled)
         onChange?()
     }
 
@@ -107,9 +102,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Display") {
-                Toggle("Show the HUD around the notch", isOn: $model.hudEnabled)
-                    .help("The menu bar item stays either way.")
+            Section("General") {
                 Toggle("Open at login", isOn: Binding(
                     get: { model.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }

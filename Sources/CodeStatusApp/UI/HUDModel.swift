@@ -49,29 +49,6 @@ public final class HUDModel {
     public func tick(_ now: Date = Date()) {
         self.now = now
     }
-
-    // MARK: - Sizing
-
-    /// How large the HUD wants to be.
-    ///
-    /// Returned rather than measured from SwiftUI because the window frame has
-    /// to be decided before the content is laid out — the panel's position
-    /// depends on its size, and on a notched display the compact size has to fit
-    /// inside the housing.
-    public func contentSize(for presentation: HUDPresentation) -> CGSize {
-        switch presentation {
-        case .compact:
-            // Three dot-and-number groups at most; drop the ones that are zero.
-            let groups = [free, busy, needsYou, indeterminate].filter { $0 > 0 }.count
-            let width = max(1, groups) * 46 + 16
-            return CGSize(width: CGFloat(width), height: 22)
-
-        case .expanded:
-            let rows = max(1, min(sessions.count, 8))
-            let footnote: CGFloat = unreportedCount > 0 ? 28 : 0
-            return CGSize(width: 320, height: CGFloat(rows) * 52 + 24 + footnote)
-        }
-    }
 }
 
 // MARK: - Presentation of state
@@ -139,16 +116,5 @@ public enum DurationFormatter {
         if minutes < 60 { return "\(minutes)m \(seconds % 60)s" }
         let hours = minutes / 60
         return "\(hours)h \(minutes % 60)m"
-    }
-}
-
-private struct HUDPresentationKey: EnvironmentKey {
-    static let defaultValue: HUDPresentation = .compact
-}
-
-public extension EnvironmentValues {
-    var hudPresentation: HUDPresentation {
-        get { self[HUDPresentationKey.self] }
-        set { self[HUDPresentationKey.self] = newValue }
     }
 }

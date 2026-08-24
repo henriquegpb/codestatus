@@ -1,94 +1,51 @@
 import CodeStatusCore
 import SwiftUI
 
-/// What the HUD draws, in both shapes.
+/// What the menu bar popover draws: the session list, and the controls under it.
 ///
-/// The same view serves two very different containers, which is why the two
-/// flags exist. The floating panel is a transparent, borderless window sized by
-/// `NotchGeometry`: it has no surface of its own and its content must fill it.
-/// The popover already draws a surface and sizes itself to what it is given, so
-/// there the content has to hug and must not draw a second background — a card
-/// inside a card reads as a layout bug, which is exactly how it looked.
+/// The popover supplies its own surface and sizes itself to whatever this view
+/// reports, so the content hugs rather than fills and must not draw a background
+/// of its own — a card inside a card reads as a layout bug, which is exactly how
+/// it looked.
 struct HUDContentView: View {
     @Bindable var model: HUDModel
-    @Environment(\.hudPresentation) private var presentation
-
-    var drawsBackground: Bool = true
-    var fillsAvailableSpace: Bool = true
 
     var onOpen: ((AgentSession) -> Void)?
     var onDismiss: ((AgentSession) -> Void)?
-
-    var body: some View {
-        Group {
-            switch presentation {
-            case .compact:
-                CompactCounters(model: model)
-            case .expanded:
-                ExpandedSessionList(
-                    model: model,
-                    drawsBackground: drawsBackground,
-                    onOpen: onOpen,
-                    onDismiss: onDismiss
-                )
-            }
-        }
-        .frame(
-            maxWidth: fillsAvailableSpace ? .infinity : nil,
-            maxHeight: fillsAvailableSpace ? .infinity : nil
-        )
-    }
-}
-
-/// The at-a-glance state: one dot and number per non-empty bucket.
-///
-/// Empty buckets are omitted rather than shown as zero — on a notched display
-/// the whole thing has to fit inside the camera housing, so every group has to
-/// earn its width.
-private struct CompactCounters: View {
-    @Bindable var model: HUDModel
-
-    private var groups: [(bucket: StateBucket, count: Int)] {
-        [(.free, model.free), (.busy, model.busy),
-         (.needsYou, model.needsYou), (.indeterminate, model.indeterminate)]
-            .filter { $0.1 > 0 }
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(groups, id: \.bucket) { group in
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(group.bucket.tint)
-                        .frame(width: 6, height: 6)
-                    Text("\(group.count)")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(group.count) \(group.bucket.label)")
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Capsule().fill(.black.opacity(0.55)))
-    }
-}
-
-/// The full list, shown on hover or click.
-private struct ExpandedSessionList: View {
-    @Bindable var model: HUDModel
-    var drawsBackground: Bool = true
-    var onOpen: ((AgentSession) -> Void)?
-    var onDismiss: ((AgentSession) -> Void)?
+    var onRefresh: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
+    var onQuit: (() -> Void)?
 
     /// Beyond this the list scrolls instead of growing. Twelve sessions is
     /// already an unusual day; a window that keeps growing past it would run off
     /// the screen with no way to reach the bottom rows.
     private static let maximumVisibleRows = 12
 
-    private var rows: some View {
+    var body: some View {
+        VStack(spacing: 0) {
+            // Only scroll once there is something to scroll. A ScrollView has no
+            // intrinsic height, so wrapping unconditionally would force the
+            // popover to a fixed size and reintroduce the empty space below a
+            // short list that this whole shape exists to avoid.
+            if model.sessions.count > Self.maximumVisibleRows {
+                ScrollView { list }.frame(height: 560)
+            } else {
+                list
+            }
+
+            // Full-bleed, unlike the inset dividers between rows: it separates
+            // two zones rather than two items of the same kind.
+            Divider().opacity(0.5)
+
+            FooterBar(
+                onRefresh: onRefresh,
+                onOpenSettings: onOpenSettings,
+                onQuit: onQuit
+            )
+        }
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.sessions.isEmpty {
                 Text(model.unreportedCount > 0 ? "No sessions reporting yet." : "No agent sessions.")
@@ -106,6 +63,12 @@ private struct ExpandedSessionList: View {
                 unreportedFootnote
             }
         }
+        // Text pinned to the edge of a popover reads as clipped, and the popover
+        // supplies no inset of its own.
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Running agents that have never sent us an event.
@@ -135,32 +98,121 @@ private struct ExpandedSessionList: View {
             .padding(.vertical, 3)
         }
     }
+}
+
+// MARK: - Footer
+
+/// Refresh, Settings, and Quit, under the list.
+///
+/// The same three actions live in the status item's right-click menu, which
+/// almost nobody discovers — a menu bar app that can only be quit by a gesture
+/// you have to already know about is one the user cannot get rid of. Quit sits
+/// apart from the other two because it is the one click here that cannot be
+/// taken back.
+private struct FooterBar: View {
+    var onRefresh: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
+    var onQuit: (() -> Void)?
 
     var body: some View {
-        Group {
-            // Only scroll once there is something to scroll. A ScrollView has no
-            // intrinsic height, so wrapping unconditionally would force the
-            // popover to a fixed size and reintroduce the empty space below a
-            // short list that this whole shape exists to avoid.
-            if model.sessions.count > Self.maximumVisibleRows {
-                ScrollView { rows }.frame(height: 560)
-            } else {
-                rows
-            }
+        HStack(spacing: 2) {
+            FooterButton(
+                title: "Refresh",
+                systemImage: "arrow.clockwise",
+                acknowledgesTap: true
+            ) { onRefresh?() }
+                .help("Re-scan for agent sessions.")
+
+            FooterButton(title: "Settings", systemImage: "gearshape") { onOpenSettings?() }
+
+            Spacer(minLength: 8)
+
+            FooterButton(title: "Quit", systemImage: "power") { onQuit?() }
         }
-        // Horizontal inset is the same either way: text pinned to the edge of a
-        // popover reads as clipped, and the popover supplies no inset of its own.
-        // Only the vertical differs, because the floating panel draws the card
-        // the content sits in while the popover already has one.
-        .padding(.horizontal, 14)
-        .padding(.vertical, drawsBackground ? 12 : 8)
-        .background {
-            if drawsBackground {
-                RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.regularMaterial)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+}
+
+private struct FooterButton: View {
+    let title: String
+    let systemImage: String
+    /// Swaps the icon for a spinner for a beat after a tap. The action behind
+    /// it usually changes nothing visible, and a button that looks inert is one
+    /// the user presses again and again.
+    var acknowledgesTap = false
+    var action: () -> Void
+
+    /// Long enough to register as a response, short enough that it never reads
+    /// as work still in progress — the sweep is already finished by the time it
+    /// clears.
+    private static let acknowledgementDuration = Duration.milliseconds(250)
+
+    /// Both the glyph and the spinner are laid out in a box this wide, so the
+    /// swap cannot shift the label beside it.
+    private static let iconSide: CGFloat = 11
+
+    @State private var isHovering = false
+    @State private var isAcknowledging = false
+
+    var body: some View {
+        Button {
+            acknowledgeTap()
+            action()
+        } label: {
+            HStack(spacing: 5) {
+                icon
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
             }
+            // A capsule rather than a rounded rectangle: the radius tracks the
+            // height, so the ends stay fully round whatever the text metrics do.
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background {
+                Capsule().fill(.primary.opacity(isHovering ? 0.09 : 0))
+            }
+            // Without this the gaps between icon and label are not clickable,
+            // and the hover highlight flickers as the cursor crosses them.
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isHovering ? .primary : .secondary)
+        .onHover { isHovering = $0 }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if isAcknowledging {
+            ProgressView()
+                .controlSize(.mini)
+                // Deliberately drawn larger than the box it reserves: a spinner
+                // matched to a 10pt glyph is too fine to read at a glance. The
+                // frame keeps the layout identical to the glyph's, and there is
+                // padding either side for the overflow to spill into.
+                .scaleEffect(0.9)
+                .frame(width: Self.iconSide, height: Self.iconSide)
+        } else {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .medium))
+                .frame(width: Self.iconSide, height: Self.iconSide)
+        }
+    }
+
+    private func acknowledgeTap() {
+        // A second click while the spinner is up refreshes again but does not
+        // restart it; two overlapping timers would leave it up for whichever
+        // finished last.
+        guard acknowledgesTap, !isAcknowledging else { return }
+        isAcknowledging = true
+        Task {
+            try? await Task.sleep(for: Self.acknowledgementDuration)
+            isAcknowledging = false
         }
     }
 }
+
+// MARK: - Rows
 
 private struct SessionRow: View {
     let session: AgentSession
@@ -185,10 +237,14 @@ private struct SessionRow: View {
                     Text(session.provider.displayName)
                     Text("·")
                     Text(session.state.label)
-                    // Duration is only meaningful while something is happening;
-                    // showing "Free · 3h" invites the reading that something is
-                    // stuck when the session is simply idle and available.
-                    if session.state == .busy || session.state.needsAttention {
+                    // Shown for free sessions too: how long one has been idle is
+                    // how you spot the session you finished with an hour ago and
+                    // forgot to close. The states without a duration are the ones
+                    // where the clock would be meaningless — we do not know when
+                    // a discovering or reconnecting session entered that state.
+                    if session.state == .free
+                        || session.state == .busy
+                        || session.state.needsAttention {
                         Text("·")
                         Text(DurationFormatter.short(session.duration(at: now)))
                             .monospacedDigit()

@@ -18,7 +18,7 @@ the next twenty minutes tabbing between them asking "is it done yet?".
 
 CodeStatus answers that without you looking. It tracks every Claude Code and Codex session on
 your Mac, works out whether each one is *working*, *free*, *waiting for your approval*,
-*waiting for an answer*, or *failed*, and shows the counts in a HUD around the notch — with a
+*waiting for an answer*, or *failed*, and shows the counts in the menu bar — with a
 sound and a notification the moment one needs you.
 
 ```
@@ -63,7 +63,7 @@ root, workspace name, and host application.
 | Hook binary, Unix socket transport, spool fallback | done, tested |
 | Session registry, persistence, sleep/wake reconciliation | done, tested |
 | Config installers (byte-preserving), process watcher | done, tested |
-| Notch HUD, menu bar item, notifications, session opening | built, needs visual verification on hardware |
+| Menu bar item, notifications, session opening | built, needs visual verification on hardware |
 | Diagnostics report and sanitised export | done, tested |
 | Onboarding flow, settings window | done |
 | Signed and notarised release pipeline | scripted; notarisation not yet exercised |
@@ -116,7 +116,7 @@ CodeStatus daemon
         └── ProcessWatcher    kqueue NOTE_EXIT — discovery and death, never state
                 │
                 ▼
-        HUD · sound · notification
+        menu bar · sound · notification
 ```
 
 Three design choices carry most of the weight:

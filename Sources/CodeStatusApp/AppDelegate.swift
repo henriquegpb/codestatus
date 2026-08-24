@@ -9,7 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = HUDModel()
     private var notifications: NotificationCoordinator!
     private var daemon: SessionDaemon!
-    private var hud: NotchHUDController!
     private var menuBar: MenuBarController!
     private var opener: SessionOpener!
     private var diagnostics: DiagnosticsWindowController!
@@ -33,13 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         daemon = SessionDaemon(model: model, notifications: notifications)
-        hud = NotchHUDController(model: model)
         menuBar = MenuBarController(model: model)
 
         wireInteractions()
 
         daemon.onRegistryChanged = { [weak self] in
-            self?.hud.refresh()
             self?.menuBar.refresh()
         }
         daemon.start()
@@ -86,7 +83,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         daemon.stop()
-        hud.teardown()
     }
 
     private func wireInteractions() {
@@ -109,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onQuit = { NSApp.terminate(nil) }
         menuBar.onOpenDiagnostics = { [weak self] in self?.diagnostics.show() }
         menuBar.onOpenPreferences = { [weak self] in self?.settingsWindow.show() }
+        // A sweep, not a restart: it finds sessions that started before their
+        // hooks were installed, which is the case the button exists for.
+        menuBar.onRefresh = { [weak self] in self?.daemon.refreshAdapters() }
     }
 
     /// Exercises the whole delivery path — hook binary, socket, reducer, sound,
@@ -153,7 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applySettings() {
         notifications.preferences = settings.notificationPreferences
-        hud.isEnabled = settings.hudEnabled
     }
 
     /// Removes our entries from both agents' configuration.

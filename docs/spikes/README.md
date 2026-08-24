@@ -19,8 +19,8 @@ Swift 6.3.3, Claude Code 2.1.186, Codex CLI 0.138.0-alpha.7 (app bundle) and 0.1
 | 3 | Codex CLI lifecycle hooks and `agent-turn-complete` | done | [02](02-codex-hooks.md) |
 | 4 | Codex in VS Code — which events actually arrive | pending | [02](02-codex-hooks.md) |
 | 5 | PID → TTY → Terminal tab mapping | partial | [03](03-terminal-tab-mapping.md) |
-| 6 | Stable notch HUD without private APIs | partial | [04](04-notch-hud.md) |
-| 7 | `NSPanel` across Spaces and full screen | pending | [04](04-notch-hud.md) |
+| 6 | Stable notch HUD without private APIs | dropped — HUD removed, the menu bar carries it | [04](04-notch-hud.md) |
+| 7 | `NSPanel` across Spaces and full screen | dropped with spike 6 | [04](04-notch-hud.md) |
 | 8 | Unix socket transport with spool fallback | done | [05](05-event-transport.md) |
 | 9 | Sleep/wake reconciliation | partial | [05](05-event-transport.md) |
 | 10 | Sending a prompt to a PTY-managed session | pending | deferred to V1.1 |

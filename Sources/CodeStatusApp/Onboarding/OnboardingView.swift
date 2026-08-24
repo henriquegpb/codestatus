@@ -40,7 +40,7 @@ struct OnboardingView: View {
             Text("Start several coding agents, keep working, and come back only when one is actually done or actually needs you.")
                 .font(.system(size: 13))
             counterPreview
-            Text("CodeStatus watches Claude Code and Codex sessions and shows their state around the notch and in the menu bar.")
+            Text("CodeStatus watches Claude Code and Codex sessions and shows their state in the menu bar.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

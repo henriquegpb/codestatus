@@ -2,12 +2,13 @@ import AppKit
 import CodeStatusCore
 import SwiftUI
 
-/// The menu bar item.
+/// The menu bar item, and the only surface CodeStatus has.
 ///
-/// Not a consolation prize for Macs without a notch: on those machines this is
-/// the primary surface and carries the full session list, and on every machine
-/// it is the recovery path if the HUD is disabled, hidden behind a full-screen
-/// app, or sitting on a display that just got unplugged.
+/// It replaced a floating panel that sat around the notch. The panel was the
+/// same information in a place the system does not manage: it had to be told
+/// about display changes, Spaces, and full-screen apps, and it looked wrong on
+/// every Mac without a camera housing to hide behind. The menu bar is where a
+/// status item belongs, and macOS handles all of that for us.
 @MainActor
 final class MenuBarController {
 
@@ -17,6 +18,7 @@ final class MenuBarController {
 
     var onOpenSession: ((AgentSession) -> Void)?
     var onDismissSession: ((AgentSession) -> Void)?
+    var onRefresh: (() -> Void)?
     var onOpenDiagnostics: (() -> Void)?
     var onOpenPreferences: (() -> Void)?
     var onQuit: (() -> Void)?
@@ -119,14 +121,21 @@ final class MenuBarController {
         let hosting = NSHostingController(
             rootView: HUDContentView(
                 model: model,
-                // The popover already draws a surface; a second one inside it
-                // reads as a card floating in an empty window.
-                drawsBackground: false,
-                fillsAvailableSpace: false,
                 onOpen: { [weak self] in self?.onOpenSession?($0) },
-                onDismiss: { [weak self] in self?.onDismissSession?($0) }
+                onDismiss: { [weak self] in self?.onDismissSession?($0) },
+                onRefresh: { [weak self] in self?.onRefresh?() },
+                // Both close the popover first: Settings opens a window that
+                // would otherwise appear behind it, and a Quit that leaves the
+                // popover on screen while the app dies looks like a crash.
+                onOpenSettings: { [weak self] in
+                    self?.popover.performClose(nil)
+                    self?.onOpenPreferences?()
+                },
+                onQuit: { [weak self] in
+                    self?.popover.performClose(nil)
+                    self?.onQuit?()
+                }
             )
-            .environment(\.hudPresentation, .expanded)
             .frame(width: 320)
         )
         // Lets the popover size itself to the list rather than to a constant.
