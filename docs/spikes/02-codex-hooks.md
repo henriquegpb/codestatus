@@ -1,7 +1,8 @@
 # Spike 3 & 4 — Codex lifecycle hooks
 
 - **Spike 3 (Codex CLI):** done
-- **Spike 4 (Codex in VS Code):** pending
+- **Spike 4 (Codex in VS Code):** done — see "Spike 4 resolved" below
+- **Follow-up (why nothing ever arrived):** done — see "The install was correct and still never ran"
 
 ## Hypothesis
 
@@ -91,13 +92,74 @@ the agent" is structural — an async hook *cannot* sit on the critical path. Fo
 the hook runs synchronously, and the guarantee rests on it being bounded instead. Roughly 10 ms
 typical, a 50 ms cap on the socket connect, and `timeout: 5` as the backstop.
 
+## The install was correct and still never ran
+
+Everything above shipped, `~/.codex/hooks.json` held our seven entries, the user trusted them
+through `/hooks` — six `trusted_hash` values sat in `config.toml` — and CodeStatus never received
+a single Codex event. Running the CLI directly is what finally showed why:
+
+```
+hook: SessionStart
+hook: SessionStart Failed
+```
+
+**Codex splits a hook's `command` on whitespace instead of treating it as one path.** Our binary
+lives at `~/Library/Application Support/CodeStatus/bin/codestatus-hook`, so Codex tries to spawn
+`/Users/<user>/Library/Application` and every invocation fails before the hook exists.
+
+Isolated by substitution, holding everything else fixed:
+
+| `command` | result |
+|---|---|
+| `/usr/bin/true` at a spaced path | Failed |
+| `codestatus-hook` at `/tmp/cshook/` | **Completed** |
+| `codestatus-hook` under `Application Support` | Failed |
+
+The same run also shows the hook's own exit code is irrelevant: `/usr/bin/true` fails at a spaced
+path, and our binary — which exits 0 on every path by construction — succeeds at a clean one.
+
+Two consequences, both verified:
+
+1. **`args` is never delivered.** `{"command": "/usr/bin/tee", "args": ["/tmp/out"]}` produced no
+   file: Codex ignores the array entirely. The provider therefore cannot travel in `args`. It
+   travels in the file name instead — a second copy staged as `codestatus-hook-codex`, read back
+   off `argv[0]`. `args` is still written, so a build that starts honouring it agrees.
+2. **`--dangerously-bypass-hook-trust` does not work in 0.138.0.** It prints its warning and runs
+   nothing. It does work in 0.149.0-alpha.4.1, which is what made a scratch `CODEX_HOME` usable as
+   a test harness.
+
+Diagnosing this cost far more than it should have because Codex reports only `Failed` — no exit
+code, no spawn error, no path. Upstream has the same complaint (openai/codex#27052).
+
+### What trust actually covers
+
+Trust survives replacing the binary: swapping `codestatus-hook` for `/usr/bin/true` at the same
+path kept the hooks running. The hash is over the entry, not the file it points at. So changing
+`hooks.json` — as the fix does — **requires the user to re-trust through `/hooks`**, while shipping
+a new hook binary does not.
+
+## Spike 4 resolved
+
+Codex in VS Code **does** deliver hooks from `~/.codex/hooks.json`. `~/.codex/logs_2.sqlite`
+records them from the app-server itself:
+
+```
+TRACE codex_app_server::outgoing_message  app-server event: hook/started
+TRACE codex_app_server::outgoing_message  app-server event: hook/completed
+```
+
+This matters more than it sounds: `codex doctor` reports this machine's rollouts as
+`vscode=33, cli=1`, so the editor is where Codex is actually used, and it was the one path the
+capability matrix had marked unverified.
+
+`SessionEnd` is real in 0.149.0-alpha.4.1 — it clamps our `timeout: 5` to 3s and says so — though
+it is absent from 0.138.0's event enum, which silently ignores the entry.
+
 ## Limitations
 
-- Spike 4 is **not done**: Codex inside VS Code runs as `app-server`, not as the TUI, and it has
-  not been confirmed that hooks from `~/.codex/hooks.json` are actually delivered in that mode.
-  Until it is, the capability matrix must say "needs verification" and no code path may assume it.
-- `session_end` is present in the 0.138.0 binary's strings but has not been observed firing.
 - Both builds being pre-release alphas means event names could still move.
+- The whitespace splitting is a Codex bug, not a documented contract. If it is fixed, a
+  space-free path still works; that is why the fix moves the binary rather than quoting the string.
 
 ## Architectural decision
 
