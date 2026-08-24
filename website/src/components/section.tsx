@@ -19,7 +19,9 @@ export function Section({
   children?: ReactNode;
 }) {
   return (
-    <section id={id} className="border-t border-line">
+    // scroll-mt matches the sticky header's height, so a link to #privacy lands
+    // the eyebrow below the bar rather than behind it.
+    <section id={id} className="scroll-mt-[var(--header-h)] border-t border-line">
       <div className="mx-auto grid max-w-5xl gap-x-8 gap-y-6 px-6 py-14 md:grid-cols-[11rem_1fr]">
         <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">
           {eyebrow}

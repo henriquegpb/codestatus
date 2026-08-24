@@ -149,7 +149,11 @@ export function HudPreview({ className = "" }: { className?: string }) {
       ref={containerRef}
       // Translucent rather than solid: the panel sits on the gradient, and an
       // opaque block there would read as a hole punched in the background.
-      className={`relative overflow-hidden rounded-2xl border border-line bg-black/45 backdrop-blur-xl ${className}`}
+      //
+      // A column rather than a plain block so the panel can be handed a height
+      // taller than its rows need -- the hero stretches it to match the
+      // screenshot beside it -- and the list takes the slack.
+      className={`relative flex flex-col overflow-hidden rounded-2xl border border-line bg-black/45 backdrop-blur-xl ${className}`}
     >
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-line px-6 py-4 font-mono text-sm">
         <Count state="free" n={count("free")} label="free" />
@@ -198,7 +202,10 @@ function SessionList({ rows }: { rows: Row[] }) {
   }, [rows]);
 
   return (
-    <ul className="divide-y divide-line">
+    // Any height beyond what the rows need is split evenly between them, so a
+    // stretched panel keeps its dividers evenly spaced instead of growing one
+    // gap at the bottom.
+    <ul className="flex flex-1 flex-col divide-y divide-line">
       {rows.map((row, i) => (
         <li
           key={row.id}
@@ -206,7 +213,7 @@ function SessionList({ rows }: { rows: Row[] }) {
             if (el) elements.current.set(row.id, el);
             else elements.current.delete(row.id);
           }}
-          className={`flex items-center gap-3 px-6 py-4 text-sm ${
+          className={`flex flex-1 items-center gap-3 px-6 py-4 text-sm ${
             row.leaving ? "row-out" : "row-in"
           }`}
         >

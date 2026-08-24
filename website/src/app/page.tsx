@@ -9,6 +9,7 @@ import {
   EyeOff,
   FileCode,
   ListFilter,
+  MenuSquare,
   MousePointerClick,
   ShieldCheck,
   Webhook,
@@ -16,6 +17,7 @@ import {
 import wordmark from "../../public/wordmark.svg";
 import mark from "../../public/mark.svg";
 import githubMark from "../../public/GitHub.svg";
+import demoMenubar from "../../public/DemoMenubar.png";
 import { SITE } from "@/lib/site";
 import { HudPreview } from "@/components/hud-preview";
 import { GrainientField } from "@/components/site-background";
@@ -42,8 +44,14 @@ export default function Home() {
   return (
     <>
       {/* Solid black rather than transparent: the gradient running under the
-          wordmark made the logo compete with the field behind it. */}
-      <header className="h-[var(--header-h)] w-full border-b border-line bg-background">
+          wordmark made the logo compete with the field behind it -- and now
+          that the bar is sticky, opaque is also what keeps the page from
+          showing through it on the way past.
+
+          Sticky rather than fixed so it still occupies its 4.25rem in the
+          flow: the hero's 100svh-minus-header height and every section's
+          spacing stay measured from the same box they always were. */}
+      <header className="sticky top-0 z-40 h-[var(--header-h)] w-full border-b border-line bg-background">
         <nav className="mx-auto flex h-full max-w-5xl items-center justify-between px-6">
           <Link href="/" aria-label="CodeStatus — home">
             <Image src={wordmark} alt="CodeStatus" height={26} priority />
@@ -92,12 +100,44 @@ export default function Home() {
             </span>
           </div>
 
-          <HudPreview className="mt-12" />
-          <p className="mt-3.5 flex items-center gap-2 text-sm text-muted">
-            <MousePointerClick className="size-4 shrink-0 text-accent" strokeWidth={1.5} aria-hidden />
-            Every Claude Code and Codex session on your Mac. Click one to land
-            back in its terminal tab or workspace.
-          </p>
+          {/*
+            The two ways the same state is read: the panel on the left is drawn
+            in markup and animates, the screenshot on the right is the shipping
+            menu bar. They split one row.
+
+            The four children sit in one grid rather than in two stacked columns
+            so the visuals share a row and the captions share the row below:
+            whatever height the screenshot comes out at, the panel stretches to
+            match it exactly, and neither caption can push its own visual out of
+            line with the other. The captions are the second and fourth children
+            so the single-column phone layout reads panel, caption, shot,
+            caption; `order` puts them back after both visuals from md up.
+
+            18rem for the screenshot is a height budget, not a taste call: the
+            row is as tall as the shot renders, so at this width it lands on the
+            three-row panel's natural height and the hero still fits a laptop
+            screen without the captions falling below the fold.
+          */}
+          <div className="mt-10 grid gap-x-6 gap-y-3.5 md:grid-cols-[1fr_18rem]">
+            <HudPreview />
+            <p className="mb-4 flex items-center gap-2 text-sm text-muted md:order-3 md:mb-0">
+              <MousePointerClick className="size-4 shrink-0 text-accent" strokeWidth={1.5} aria-hidden />
+              Every Claude Code and Codex session on your Mac. Click one to land
+              back in its terminal tab or workspace.
+            </p>
+            <div className="overflow-hidden rounded-2xl border border-line bg-panel md:order-2">
+              <Image
+                src={demoMenubar}
+                alt="The CodeStatus menu bar popover: three sessions with their provider, state, and elapsed time, a note that three more are not reporting yet, and Refresh and Settings along the bottom."
+                className="w-full"
+                sizes="(min-width: 48rem) 18rem, 100vw"
+              />
+            </div>
+            <p className="flex items-center gap-2 text-sm text-muted md:order-4">
+              <MenuSquare className="size-4 shrink-0 text-accent" strokeWidth={1.5} aria-hidden />
+              Counts in your menu bar. Click them for the same list.
+            </p>
+          </div>
         </section>
 
         <Section
