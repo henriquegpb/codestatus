@@ -24,7 +24,22 @@ SIGN=false
 IDENTITY="-"
 if [[ "${1:-}" == "--sign" ]]; then
     SIGN=true
-    [[ -n "${2:-}" ]] && IDENTITY="$2"
+    # `--sign` with no argument at all is the documented ad-hoc shortcut. An
+    # argument that is present but empty is something else entirely: a caller
+    # that meant to pass an identity and lost it, which in practice means CI
+    # expanding an unset secret. Falling back to ad-hoc there produces a build
+    # that looks signed, passes every local check, and is only rejected by the
+    # notary service minutes later — with an error that names the binary rather
+    # than the missing secret. Refuse instead.
+    if [[ $# -ge 2 ]]; then
+        [[ -n "$2" ]] || {
+            echo "error: --sign was given an empty identity" >&2
+            echo "       In CI this means the SIGNING_IDENTITY secret is unset or misnamed." >&2
+            echo "       Pass --sign with no argument if ad-hoc signing is what you want." >&2
+            exit 1
+        }
+        IDENTITY="$2"
+    fi
 fi
 
 TRIPLES=(arm64-apple-macosx14.0 x86_64-apple-macosx14.0)
@@ -88,6 +103,26 @@ if $SIGN; then
             --sign "$IDENTITY" "$APP"
     fi
     codesign --verify --deep --strict --verbose=2 "$APP"
+
+    # `codesign --verify` answers "is this signature intact", not "will Apple
+    # accept it". The three things notarisation actually requires are checked
+    # here, per slice, because a universal binary can satisfy them on one
+    # architecture and not the other — and because finding out from the notary
+    # service costs several minutes and reports the binary rather than the cause.
+    if [[ "$IDENTITY" != "-" ]]; then
+        for arch in $(lipo -archs "$APP/Contents/MacOS/CodeStatusApp"); do
+            # --verbose=2: the Authority chain is not printed below it.
+            description="$(codesign -dv --verbose=2 --arch "$arch" "$APP" 2>&1 || true)"
+            for requirement in "Authority=Developer ID Application" "Timestamp=" "flags=0x10000(runtime)"; do
+                grep -qF "$requirement" <<<"$description" || {
+                    echo "error: $arch slice is missing '$requirement'" >&2
+                    echo "       Notarisation would reject this build." >&2
+                    exit 1
+                }
+            done
+        done
+        echo "==> Verified: Developer ID, secure timestamp and hardened runtime on every slice"
+    fi
 fi
 
 echo "==> Built $APP"
