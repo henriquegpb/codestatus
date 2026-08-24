@@ -582,6 +582,102 @@ struct HookInstallerTests {
         #expect(try codex.trustRequirement() == .notInstalled)
     }
 
+    /// Codex splits a hook's `command` on whitespace instead of treating it as
+    /// one path. `~/Library/Application Support/...` therefore spawns
+    /// `/Users/<user>/Library/Application`, and every hook fails — the
+    /// transcript says only `hook: SessionStart Failed`, never why.
+    @Test("Codex's hook command carries no whitespace, whatever the home is called")
+    func codexCommandIsSpaceFree() throws {
+        // The shared binary is unusable for Codex, which is the whole reason a
+        // second copy exists. If this ever stops being true, so does the copy.
+        #expect(RuntimePaths(home: URL(fileURLWithPath: "/Users/ada")).hookBinary.path.contains(" "))
+
+        for home in ["/Users/ada", "/Users/ada lovelace"] {
+            let paths = RuntimePaths(home: URL(fileURLWithPath: home))
+            #expect(!paths.codexHookBinary.path.contains(" "), "home \(home)")
+            // The provider rides in the file name because Codex drops `args`.
+            #expect(paths.codexHookBinary.lastPathComponent.hasSuffix("-codex"))
+        }
+        // A home that is itself spaced has to leave the home directory entirely.
+        #expect(RuntimePaths(home: URL(fileURLWithPath: "/Users/ada lovelace")).codexBinIsFallback)
+        #expect(!RuntimePaths(home: URL(fileURLWithPath: "/Users/ada")).codexBinIsFallback)
+    }
+
+    @Test("A Codex entry left at the old spaced path is replaced, not left beside the new one")
+    func codexLegacyEntryIsMigrated() throws {
+        let sandbox = try Sandbox()
+        defer { sandbox.destroy() }
+
+        // Exactly what every build before the move wrote: the shared binary
+        // under Application Support, which Codex could never spawn.
+        let legacy = CodexHookInstaller(
+            paths: sandbox.paths,
+            home: sandbox.home,
+            hookBinary: sandbox.paths.hookBinary
+        )
+        try legacy.install()
+
+        let current = CodexHookInstaller(paths: sandbox.paths, home: sandbox.home)
+        #expect(try !current.isInstalled(), "the old spaced entry must not read as installed")
+        try current.install()
+
+        let text = try #require(
+            FileManager.default.contents(atPath: current.hooksURL.path)
+                .flatMap { String(data: $0, encoding: .utf8) }
+        )
+        let surgeon = try JSONSurgeon(text)
+        for event in CodexHookInstaller.events {
+            let elements = try #require(surgeon.arrayElements(atPath: ["hooks", event]))
+            #expect(elements.count == 1, "\(event) kept a stale entry alongside the new one")
+            #expect(elements[0].contains(sandbox.paths.codexHookBinary.path))
+            #expect(!elements[0].contains("Application Support"))
+        }
+        #expect(try current.isInstalled())
+    }
+
+    @Test("Migration refreshes a stale Codex install and never touches an untouched agent")
+    func migrationOnlyRefreshesOurOwnStaleEntries() throws {
+        let sandbox = try Sandbox()
+        defer { sandbox.destroy() }
+
+        let current = CodexHookInstaller(paths: sandbox.paths, home: sandbox.home)
+
+        // Nobody ever connected Codex. Installing here would be adding hooks to
+        // someone's agent uninvited, so there is nothing to migrate.
+        #expect(try !current.needsMigration())
+
+        // A hooks.json that is entirely the user's own is still not ours.
+        let foreign = """
+        {"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/usr/local/bin/their-tool"}]}]}}
+        """
+        try FileManager.default.createDirectory(
+            at: current.hooksURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(foreign.utf8).write(to: current.hooksURL)
+        #expect(try !current.needsMigration())
+        try Data(foreign.utf8).write(to: current.hooksURL)
+
+        // An install from before the move: ours, and unrunnable.
+        try CodexHookInstaller(
+            paths: sandbox.paths,
+            home: sandbox.home,
+            hookBinary: sandbox.paths.hookBinary
+        ).install()
+        #expect(try current.needsMigration())
+
+        try current.install()
+        #expect(try !current.needsMigration(), "migration must be idempotent")
+        #expect(try current.isInstalled())
+
+        // The user's own hook survived all of it.
+        let text = try #require(
+            FileManager.default.contents(atPath: current.hooksURL.path)
+                .flatMap { String(data: $0, encoding: .utf8) }
+        )
+        #expect(text.contains("/usr/local/bin/their-tool"))
+    }
+
     @Test("An entry left by an older install at a different path is replaced, not duplicated")
     func staleEntriesAreUpgraded() throws {
         let sandbox = try Sandbox()

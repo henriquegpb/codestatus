@@ -27,18 +27,42 @@ let spoolMaxFiles = 512
 /// Which agent invoked us. The payload alone cannot tell us: Claude Code and
 /// Codex both send `hook_event_name` with overlapping values, so the installer
 /// passes the provider explicitly.
+///
+/// Two channels, because one agent does not offer the first. Claude Code passes
+/// `--provider` from the entry's `args`; Codex ignores `args` entirely, so
+/// nothing after `argv[0]` ever reaches us there. The installer therefore stages
+/// a per-provider copy of this binary and the name carries the answer.
 func providerArgument() -> String {
     var iterator = CommandLine.arguments.makeIterator()
-    _ = iterator.next()
+    let executable = iterator.next()
     while let argument = iterator.next() {
         if argument == "--provider", let value = iterator.next() {
-            switch value {
-            case "claude-code", "claudeCode": return "claudeCode"
-            case "codex": return "codex"
-            default: return "generic"
-            }
+            return normalisedProvider(value)
         }
     }
+    return providerFromExecutableName(executable)
+}
+
+func normalisedProvider(_ value: String) -> String {
+    switch value {
+    case "claude-code", "claudeCode": return "claudeCode"
+    case "codex": return "codex"
+    default: return "generic"
+    }
+}
+
+/// The provider encoded in our own file name, e.g. `codestatus-hook-codex`.
+///
+/// Suffix-matched rather than parsed, so a copy staged under a directory whose
+/// name happens to contain a provider cannot change the answer.
+func providerFromExecutableName(_ path: String?) -> String {
+    guard let path, !path.isEmpty else { return "generic" }
+    var name = path
+    if let slash = path.lastIndex(of: "/") {
+        name = String(path[path.index(after: slash)...])
+    }
+    if name.hasSuffix("-codex") { return "codex" }
+    if name.hasSuffix("-claude-code") { return "claudeCode" }
     return "generic"
 }
 

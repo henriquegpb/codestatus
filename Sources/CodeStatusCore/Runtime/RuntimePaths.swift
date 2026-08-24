@@ -11,8 +11,10 @@ public struct RuntimePaths: Sendable {
     public static let socketPathLimit = 100
 
     public let base: URL
+    public let home: URL
 
     public init(home: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+        self.home = home
         base = home
             .appendingPathComponent("Library/Application Support/CodeStatus", isDirectory: true)
     }
@@ -29,6 +31,38 @@ public struct RuntimePaths: Sendable {
     public var socketPointer: URL { run.appendingPathComponent("socket-path") }
     public var hookBinary: URL { bin.appendingPathComponent("codestatus-hook") }
     public var sessionsSnapshot: URL { state.appendingPathComponent("sessions.json") }
+
+    /// A second copy of the hook, staged where Codex can actually spawn it.
+    ///
+    /// Codex does not treat a hook's `command` as one path: it splits the string
+    /// on whitespace. Our binary lives under `Library/Application Support`, so
+    /// Codex tries to execute `/Users/<user>/Library/Application` and *every*
+    /// invocation fails — reported in the transcript only as `hook: SessionStart
+    /// Failed`, with no indication that the path was the problem. Verified by
+    /// swapping the binary at that path for `/usr/bin/true`, which fails
+    /// identically, and by running the same binary from a space-free path, which
+    /// succeeds. Reproduced on codex-cli 0.138.0-alpha.7 and 0.149.0-alpha.4.1.
+    ///
+    /// The same splitting is why the entry's `args` array never arrives: Codex
+    /// ignores it entirely. The provider therefore has to travel in the file
+    /// name — see `codestatus-hook`'s `providerArgument()`.
+    public var codexHookBinary: URL {
+        codexBinDirectory.appendingPathComponent("codestatus-hook-codex")
+    }
+
+    /// Where that copy can live. `~/.codestatus/bin` normally; a short directory
+    /// under `/tmp` when the home directory itself contains a space, which would
+    /// otherwise reintroduce the very problem this exists to avoid.
+    public var codexBinDirectory: URL {
+        let preferred = home.appendingPathComponent(".codestatus/bin", isDirectory: true)
+        guard preferred.path.contains(" ") else { return preferred }
+        return URL(fileURLWithPath: "/tmp/codestatus-\(getuid())/bin", isDirectory: true)
+    }
+
+    /// True when the Codex copy had to leave the home directory.
+    public var codexBinIsFallback: Bool {
+        home.appendingPathComponent(".codestatus/bin", isDirectory: true).path.contains(" ")
+    }
 
     /// The preferred socket location, inside our own Application Support tree.
     public var preferredSocket: URL { run.appendingPathComponent("e.sock") }
@@ -59,7 +93,13 @@ public struct RuntimePaths: Sendable {
 public extension RuntimePaths {
     /// Creates our directories with owner-only permissions.
     func createDirectories(fileManager: FileManager = .default) throws {
-        for directory in [base, run, bin, backups, state, spool] {
+        // The Codex copy's directory is created through the validated path when
+        // it sits in `/tmp`, which is world-writable ground.
+        if codexBinIsFallback {
+            let parent = codexBinDirectory.deletingLastPathComponent()
+            _ = RuntimePaths.prepareFallbackDirectory(parent)
+        }
+        for directory in [base, run, bin, backups, state, spool, codexBinDirectory] {
             try fileManager.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,

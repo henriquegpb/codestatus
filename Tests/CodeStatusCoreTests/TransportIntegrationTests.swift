@@ -149,6 +149,46 @@ struct TransportIntegrationTests {
         #expect(event.kind == .stop)
     }
 
+    /// Codex never passes the entry's `args`, so the only channel left is the
+    /// file name. This runs the real binary the way Codex runs it — argv[0] and
+    /// nothing else — and asserts the event still says `codex`.
+    ///
+    /// Getting this wrong is silent: the event arrives, the session appears, and
+    /// it is simply attributed to the wrong agent.
+    @Test("Copied as codestatus-hook-codex and given no arguments, the hook still reports codex")
+    func providerTravelsInTheFileName() throws {
+        guard let binary = Self.hookBinary else { return }
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let renamed = home.appendingPathComponent("codestatus-hook-codex")
+        try FileManager.default.copyItem(at: binary, to: renamed)
+
+        let received = Received()
+        let server = EventSocketServer(paths: RuntimePaths(home: home), onEvent: { received.append($0) })
+        try server.start()
+        defer { server.stop() }
+
+        let process = Process()
+        process.executableURL = renamed
+        process.arguments = []               // exactly what Codex spawns
+        process.environment = ["HOME": home.path]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(
+            Data(#"{"session_id":"c-1","hook_event_name":"UserPromptSubmit","cwd":"/tmp/p"}"#.utf8)
+        )
+        try? input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+
+        let events = try received.wait(forAtLeast: 1)
+        #expect(events.first?.provider == .codex)
+    }
+
     @Test("Concurrent hook invocations all arrive with distinct ids")
     func concurrentInvocations() throws {
         guard let binary = Self.hookBinary else { return }

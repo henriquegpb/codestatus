@@ -66,7 +66,11 @@ public struct CodexHookInstaller: Sendable {
             provider: .codex,
             targetURL: Self.hooksURL(home: home),
             events: Self.events,
-            hookBinary: hookBinary
+            // Not `paths.hookBinary`: that path contains a space, and Codex
+            // splits a hook's `command` on whitespace. See
+            // ``RuntimePaths/codexHookBinary``.
+            hookBinary: hookBinary ?? paths.codexHookBinary,
+            legacyHookBinaries: [paths.hookBinary]
         )
     }
 
@@ -92,6 +96,15 @@ public struct CodexHookInstaller: Sendable {
 
     public func isInstalled(fileManager: FileManager = .default) throws -> Bool {
         try installer.isInstalled(fileManager: fileManager)
+    }
+
+    /// Whether an older build's entries are still in `hooks.json`.
+    ///
+    /// True for everyone who connected Codex before the hook moved off the
+    /// spaced path, which is everyone who connected it at all: those entries
+    /// could never run. See ``RuntimePaths/codexHookBinary``.
+    public func needsMigration(fileManager: FileManager = .default) throws -> Bool {
+        try installer.needsMigration(fileManager: fileManager)
     }
 
     /// The manual step onboarding must surface after a successful install.

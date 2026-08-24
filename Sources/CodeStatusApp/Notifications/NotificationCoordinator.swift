@@ -139,6 +139,31 @@ public final class NotificationCoordinator {
         }
     }
 
+    /// Posts a one-off notice about CodeStatus's own setup.
+    ///
+    /// Deliberately not routed through ``handle(_:session:now:)``: none of the
+    /// session rules apply. "Only when the host is unfocused" is about not
+    /// interrupting someone watching a session, and there is no session here;
+    /// applying it would drop the notice exactly when the user is at their Mac
+    /// and able to act on it. Muting and the master switch still hold, because
+    /// those are the user saying they want quiet.
+    ///
+    /// `identifier` collapses repeats: the same notice re-posted on a later
+    /// launch replaces the old one rather than stacking.
+    public func postSetupNotice(title: String, body: String, identifier: String, now: Date = Date()) {
+        guard preferences.notificationsEnabled, !preferences.isMuted(at: now) else { return }
+
+        let notification = UNMutableNotificationContent()
+        notification.title = title
+        notification.body = body
+        let request = UNNotificationRequest(identifier: identifier, content: notification, trigger: nil)
+        center.add(request) { [logger] error in
+            if let error {
+                logger.error("setup notice failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
     private func shouldDeliver(_ transition: Transition, session: AgentSession, now: Date) -> Bool {
         guard preferences.notificationsEnabled else { return false }
         guard !preferences.isMuted(at: now) else { return false }

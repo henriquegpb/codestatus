@@ -118,6 +118,14 @@ public struct HookInstaller: Sendable {
     public let targetURL: URL
     public let events: [String]
     public let hookBinary: URL
+    /// Paths earlier builds installed this provider's hook at.
+    ///
+    /// Ownership has to include them or a move is not a move: `planInstall`
+    /// removes only entries it recognises as ours, so an entry left at the old
+    /// path would survive alongside the new one and the hook would fire twice
+    /// per event — or, when the old path is the broken one, keep failing next to
+    /// a working entry and keep reporting the session as unhealthy.
+    public let legacyHookBinaries: [URL]
 
     /// Test seam: forces post-write validation to fail so the restore path can
     /// be exercised. Never set outside tests.
@@ -128,13 +136,15 @@ public struct HookInstaller: Sendable {
         provider: AgentProvider,
         targetURL: URL,
         events: [String],
-        hookBinary: URL? = nil
+        hookBinary: URL? = nil,
+        legacyHookBinaries: [URL] = []
     ) {
         self.paths = paths
         self.provider = provider
         self.targetURL = targetURL
         self.events = events
         self.hookBinary = (hookBinary ?? paths.hookBinary).standardizedFileURL
+        self.legacyHookBinaries = legacyHookBinaries.map(\.standardizedFileURL)
     }
 
     public var targetPath: String { targetURL.path }
@@ -195,7 +205,10 @@ public struct HookInstaller: Sendable {
         for hookText in hooks {
             guard let hook = try? JSONSurgeon(hookText),
                   let command = hook.string(atPath: ["command"]) else { continue }
-            if Self.identifiesSameFile(command, hookBinary) { return true }
+            for binary in [hookBinary] + legacyHookBinaries
+            where Self.identifiesSameFile(command, binary) {
+                return true
+            }
         }
         return false
     }
@@ -399,6 +412,22 @@ public struct HookInstaller: Sendable {
             let ours = (surgeon.arrayElements(atPath: ["hooks", event]) ?? []).filter(isOurEntry)
             guard ours.count == 1 else { return false }
             return Self.canonicalEntry(ours[0]) == expected
+        }
+    }
+
+    /// Whether the file carries entries of ours that are not what we would write
+    /// today — an install from an older build that has to be refreshed.
+    ///
+    /// The distinction that matters is against a file with *no* entries of ours,
+    /// which is a user who never connected this agent. Reinstalling there would
+    /// be adding hooks to someone's agent without being asked, so this is
+    /// deliberately not "is it missing?" but "is ours stale?".
+    public func needsMigration(fileManager: FileManager = .default) throws -> Bool {
+        guard try !isInstalled(fileManager: fileManager) else { return false }
+        guard let text = try readTarget(fileManager: fileManager) else { return false }
+        let surgeon = try JSONSurgeon(text)
+        return events.contains { event in
+            (surgeon.arrayElements(atPath: ["hooks", event]) ?? []).contains(where: isOurEntry)
         }
     }
 

@@ -53,8 +53,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if OnboardingWindowController.hasCompleted {
             Task { await notifications.requestAuthorization() }
+            migrateCodexHooksIfNeeded()
         } else {
             onboarding.showIfNeeded()
+        }
+    }
+
+    /// Moves an older build's Codex entries onto the path Codex can actually
+    /// spawn, for users who will never open Setup again because as far as they
+    /// know it is already done.
+    ///
+    /// Rewriting `hooks.json` invalidates the trust the user granted, and Codex
+    /// runs nothing until they grant it again — so this cannot be silent. It
+    /// only ever refreshes entries that are already ours: a user who never
+    /// connected Codex is left alone.
+    private func migrateCodexHooksIfNeeded() {
+        let installer = CodexHookInstaller(paths: RuntimePaths())
+        do {
+            guard try installer.needsMigration() else { return }
+            _ = try installer.install()
+            logger.info("migrated Codex hooks off the unspawnable path")
+            notifications.postSetupNotice(
+                title: "Codex hooks updated",
+                body: "They could not run from their old location. "
+                    + "Run /hooks in Codex to trust them again.",
+                identifier: "co.codestatus.setup.codex-migrated"
+            )
+        } catch {
+            logger.error("Codex hook migration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -171,21 +197,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             try paths.createDirectories()
-            let installed = paths.hookBinary
-            let manager = FileManager.default
-
-            if manager.fileExists(atPath: installed.path) {
-                let current = try? Data(contentsOf: installed)
-                let candidate = try? Data(contentsOf: bundled)
-                if current == candidate { return }
-                try manager.removeItem(at: installed)
-            }
-            try manager.copyItem(at: bundled, to: installed)
-            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: installed.path)
-            logger.info("installed hook binary at \(installed.path, privacy: .public)")
+            // Two copies of one binary. Codex cannot spawn anything under
+            // `Application Support` — it splits a hook's `command` on
+            // whitespace — so it gets its own copy on a space-free path, named
+            // for the provider because Codex also drops the entry's `args`.
+            try stageHookBinary(from: bundled, to: paths.hookBinary)
+            try stageHookBinary(from: bundled, to: paths.codexHookBinary)
         } catch {
             logger.error("hook binary install failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Copies the bundled hook to `destination` unless it is already there byte
+    /// for byte.
+    private func stageHookBinary(from bundled: URL, to destination: URL) throws {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: destination.path) {
+            let current = try? Data(contentsOf: destination)
+            let candidate = try? Data(contentsOf: bundled)
+            if current == candidate { return }
+            try manager.removeItem(at: destination)
+        }
+        try manager.copyItem(at: bundled, to: destination)
+        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.path)
+        logger.info("installed hook binary at \(destination.path, privacy: .public)")
     }
 }
 
