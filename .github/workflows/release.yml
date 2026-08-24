@@ -81,6 +81,10 @@ jobs:
       - name: Build DMG
         env:
           VERSION: ${{ steps.version.outputs.value }}
+          # The image is signed too, not just the app inside it: a ticket can
+          # only be stapled to a signed artifact, so without this the staple
+          # below fails with error 65.
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
         run: scripts/make-dmg.sh "$VERSION"
 
       - name: Notarize and staple the DMG
@@ -95,9 +99,17 @@ jobs:
             --wait --timeout 30m
           xcrun stapler staple "$DMG"
 
+      # Two names for one image. The versioned copy is the historical record;
+      # the unversioned one gives the website a URL that does not change every
+      # release, since `/releases/latest/download/<name>` needs a fixed name.
+      - name: Duplicate the image under a stable name
+        run: cp "dist/CodeStatus-${{ steps.version.outputs.value }}.dmg" dist/CodeStatus.dmg
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/CodeStatus-${{ steps.version.outputs.value }}.dmg
+          files: |
+            dist/CodeStatus-${{ steps.version.outputs.value }}.dmg
+            dist/CodeStatus.dmg
           generate_release_notes: true
           fail_on_unmatched_files: true
