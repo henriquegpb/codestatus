@@ -28,8 +28,10 @@ const ROWS: { env: string; cells: Cell[]; notes?: Partial<Record<number, string>
     notes: { 4: "tab" },
   },
   {
+    // Verified: ~/.codex/logs_2.sqlite records `codex_app_server … hook/started`
+    // and `hook/completed`, so the extension delivers the same hooks the CLI does.
     env: "Codex in VS Code",
-    cells: ["yes", "unverified", "unverified", "no", "yes", "no"],
+    cells: ["yes", "yes", "yes", "no", "yes", "no"],
     notes: { 4: "workspace" },
   },
 ];
