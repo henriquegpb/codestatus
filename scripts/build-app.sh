@@ -32,13 +32,18 @@ if [[ "${1:-}" == "--sign" ]]; then
     # notary service minutes later — with an error that names the binary rather
     # than the missing secret. Refuse instead.
     if [[ $# -ge 2 ]]; then
-        [[ -n "$2" ]] || {
+        # Trimmed because a secret pasted into a web form routinely carries a
+        # trailing newline, and codesign takes the name literally: it reports
+        # `<name>: no identity found` for a certificate that is sitting right
+        # there in the keychain, with the newline invisible in the log.
+        IDENTITY_ARG="$(printf '%s' "$2" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        [[ -n "$IDENTITY_ARG" ]] || {
             echo "error: --sign was given an empty identity" >&2
             echo "       In CI this means the SIGNING_IDENTITY secret is unset or misnamed." >&2
             echo "       Pass --sign with no argument if ad-hoc signing is what you want." >&2
             exit 1
         }
-        IDENTITY="$2"
+        IDENTITY="$IDENTITY_ARG"
     fi
 fi
 
@@ -94,6 +99,17 @@ if $SIGN; then
         codesign --force --sign - "$APP/Contents/Helpers/codestatus-hook"
         codesign --force --sign - --entitlements scripts/CodeStatus.entitlements "$APP"
     else
+        # codesign's own "no identity found" names the identity it was given and
+        # nothing else, which is useless when the question is what the keychain
+        # actually holds. Both halves are printed here. The team id and common
+        # name are not sensitive: they are embedded in every binary we ship.
+        security find-identity -v -p codesigning | grep -qF "$IDENTITY" || {
+            echo "error: no codesigning identity matching:" >&2
+            echo "       [$IDENTITY]" >&2
+            echo "       The keychain holds:" >&2
+            security find-identity -v -p codesigning >&2
+            exit 1
+        }
         echo "==> Signing with: $IDENTITY"
         # Inside-out: nested code must be signed before the bundle that holds it.
         codesign --force --options runtime --timestamp \
