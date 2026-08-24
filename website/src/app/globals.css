@@ -20,6 +20,18 @@
   --free: #4ee000;
   --busy: #f0b429;
   --needs: #ff5c3d;
+
+  /*
+   * The header's height, declared rather than measured, because the hero sizes
+   * itself to the rest of the viewport and the two have to agree exactly. They
+   * did not: this was a constant tuned to a header built around a 26px
+   * wordmark, and the first taller thing put in the nav pushed the pair past
+   * 100svh and put a sliver of scroll on a screen meant to have none.
+   *
+   * The header is pinned to this, so anything placed in the nav is bounded by
+   * it instead of silently changing it.
+   */
+  --header-h: 4.25rem;
 }
 
 @theme inline {
@@ -40,6 +52,15 @@
    at a negative z-index, is not painted over by the body's own background. */
 html {
   background: var(--background);
+  /*
+   * No rubber-band. Pulling past either end detaches the page from the header
+   * and the footer and shows the void behind them, which on a black site reads
+   * as the layout coming apart rather than as a scroll gesture.
+   *
+   * Set on the root: the viewport takes its overscroll behaviour from `html`,
+   * and a value on `body` is only consulted when `html` leaves it unset.
+   */
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -117,11 +138,26 @@ body {
   animation: toast-in-out 3000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Leaving early, on hover. The same exit the timeline ends on, so a dismissed
+   toast and an expired one do not look like two different objects -- only
+   faster, because the user asked for it rather than waited for it. */
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(1.5rem) scale(0.98);
+  }
+}
+
+.toast-dismissing {
+  animation: toast-out 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .row-in,
   .row-out,
   .dot-busy,
-  .toast {
+  .toast,
+  .toast-dismissing {
     animation: none;
   }
 }

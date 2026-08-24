@@ -228,14 +228,34 @@ function SessionList({ rows }: { rows: Row[] }) {
  * rather than parked inside the card.
  */
 function Notification({ label }: { label: string }) {
+  // Hovering dismisses it, the way brushing a real banner aside does. Two
+  // states rather than one: `leaving` plays the exit, `gone` unmounts once it
+  // has, so the toast does not simply blink out from under the cursor.
+  //
+  // Neither needs resetting. The element is keyed by frame index, so the next
+  // notification is a different element with its own state.
+  const [leaving, setLeaving] = useState(false);
+  const [gone, setGone] = useState(false);
+
+  // A timer rather than `onAnimationEnd`, because reduced motion turns the exit
+  // animation off entirely and the event would then never fire -- leaving a
+  // toast that ignores the cursor for exactly the people least likely to try
+  // hovering it twice.
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => setGone(true), 220);
+    return () => clearTimeout(timer);
+  }, [leaving]);
+
   // Only ever reached after hydration -- the opening frame carries no
   // notification -- so there is no server render to mismatch.
-  if (typeof document === "undefined") return null;
+  if (typeof document === "undefined" || gone) return null;
 
   return createPortal(
     <div
       role="status"
-      className="toast pointer-events-none fixed top-4 right-4 z-50 flex w-[21rem] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[1.1rem] border border-white/10 bg-[#1c1c1e]/75 p-3 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)] backdrop-blur-2xl"
+      onMouseEnter={() => setLeaving(true)}
+      className={`toast fixed top-4 right-4 z-50 flex w-[21rem] max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[1.1rem] border border-white/10 bg-[#1c1c1e]/75 p-3 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)] backdrop-blur-2xl ${leaving ? "toast-dismissing" : ""}`}
     >
       <Image
         src={mark}

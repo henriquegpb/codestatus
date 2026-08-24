@@ -42,8 +42,8 @@ export default function Home() {
     <>
       {/* Solid black rather than transparent: the gradient running under the
           wordmark made the logo compete with the field behind it. */}
-      <header className="w-full border-b border-line bg-background">
-        <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+      <header className="h-[var(--header-h)] w-full border-b border-line bg-background">
+        <nav className="mx-auto flex h-full max-w-5xl items-center justify-between px-6">
           <Link href="/" aria-label="CodeStatus — home">
             <Image src={wordmark} alt="CodeStatus" height={26} priority />
           </Link>
@@ -62,7 +62,7 @@ export default function Home() {
           whatever height the window has, so a laptop sees the panel animate
           without scrolling.
         */}
-        <section className="mx-auto flex min-h-[calc(100svh-3.6rem)] max-w-5xl flex-col justify-center px-6 py-10">
+        <section className="mx-auto flex min-h-[calc(100svh-var(--header-h))] max-w-5xl flex-col justify-center px-6 py-10">
           {/* mt-10 is the space the eyebrow line used to occupy (its 1rem line
               box plus the heading's 1.5rem margin), kept so the hero sits where
               it did. */}
