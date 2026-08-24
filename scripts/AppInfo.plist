@@ -10,6 +10,12 @@
 	<string>co.codestatus.CodeStatus</string>
 	<key>CFBundleExecutable</key>
 	<string>CodeStatusApp</string>
+
+	<!-- Needed even though LSUIElement keeps us out of the Dock: notifications,
+	     System Settings' login items, and the Finder all read the bundle icon,
+	     and without it every notification carries a blank placeholder. -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
