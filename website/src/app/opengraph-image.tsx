@@ -13,12 +13,20 @@ export const contentType = "image/png";
  * with `site-background.tsx`: this is an approximation of that field, not a
  * second palette.
  *
- * Order matters. The greens are laid down first and weighted to the left, where
- * the hero puts its mass, then two linear washes pull the right edge and the
- * floor back to black so the type below always lands on near-black rather than
- * on mid-green.
+ * Order matters, and it is the CSS one: the first entry paints nearest the
+ * viewer, the last sits furthest back. The greens are laid down weighted to the
+ * left, where the hero puts its mass, and two linear washes sit behind them to
+ * pull the right edge and the floor back to black — they darken the greens
+ * exactly where those have faded to part-transparent, so the type always lands
+ * on near-black rather than on mid-green.
  */
 const FIELD = [
+  // A small counterweight in the far corner, so the right half is not dead
+  // black. Anchored past the corner rather than inside it: centred on the plate
+  // it reads as a floating ball, bled off the edge it reads as light. It leads
+  // the list because the two washes below would otherwise sit over it at their
+  // strongest and swallow it whole.
+  "radial-gradient(34% 55% at 99% 100%, rgba(46, 130, 0, 0.62), rgba(46, 130, 0, 0) 74%)",
   // The main body of green: left of centre, and tall enough to run the whole
   // left edge the way the hero field does rather than sitting in one corner.
   "radial-gradient(72% 115% at 13% 50%, rgba(36, 104, 0, 0.95), rgba(36, 104, 0, 0) 74%)",
