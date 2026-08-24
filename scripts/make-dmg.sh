@@ -44,9 +44,21 @@ rm -rf "$STAGING"
 
 # `--timestamp` is not optional here. Notarisation rejects a signature without
 # a secure timestamp, and the local failure it produces is opaque.
-if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
+# Trimmed for the same reason build-app.sh trims it: a secret pasted into a web
+# form carries a trailing newline, and codesign takes the name literally —
+# reporting `<name>: no identity found` for a certificate that is right there.
+IDENTITY="$(printf '%s' "${SIGNING_IDENTITY:-}" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+if [[ -n "$IDENTITY" ]]; then
+    security find-identity -v -p codesigning | grep -qF "$IDENTITY" || {
+        echo "error: no codesigning identity matching:" >&2
+        echo "       [$IDENTITY]" >&2
+        echo "       The keychain holds:" >&2
+        security find-identity -v -p codesigning >&2
+        exit 1
+    }
     echo "==> Signing $DMG"
-    codesign --sign "$SIGNING_IDENTITY" --timestamp "$DMG"
+    codesign --sign "$IDENTITY" --timestamp "$DMG"
     codesign --verify --strict --verbose=2 "$DMG"
 else
     echo "==> Not signing: SIGNING_IDENTITY is unset"
