@@ -94,6 +94,16 @@ Why the gaps:
 - **Codex "Input" is no.** Codex has no `Notification` event, so "the agent is waiting for you
   to answer a question" is not observable through any official channel. Approval requests *are*,
   via `PermissionRequest`.
+- **A session you interrupt keeps its last state until you type again.** Claude Code's `Stop`
+  hook deliberately does not run when *you* stop a turn, and no other event takes its place —
+  verified across every shape of cancel, with all 31 of its hook events registered. So pressing
+  Esc on a question leaves CodeStatus showing "needs a reply" until your next prompt. We would
+  rather be briefly wrong than guess a session went free while its question is still on screen.
+  See [spike 13](docs/spikes/07-blocking-questions.md).
+- **Codex sees only the first tool use of each turn.** Its hook payloads carry no `tool_name` or
+  `tool_use_id`, so tool uses cannot be told apart and the ones after the first are dropped as
+  out-of-order — which means an approval Codex asks for late in a turn is missed. Claude Code
+  supplies both and does not have this problem.
 - **Codex in VS Code is unverified.** It runs as `app-server` rather than the TUI, and it has
   not yet been confirmed that `hooks.json` events are delivered in that mode.
 - **"Send prompt" is no everywhere, for now.** Typing into a session we did not launch would

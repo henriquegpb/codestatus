@@ -34,6 +34,12 @@ permission_prompt   idle_prompt   agent_completed
 The product spec's event mapping assumed a fourth subtype, `agent_needs_input`. **It does not
 exist.** Mapping it would have produced a `waitingForInput` state that never fires.
 
+> **Superseded — re-verified against 2.1.247 (2026-08-27).** See
+> [07](07-blocking-questions.md). The subtype list is now fourteen values and *does* include
+> `agent_needs_input` — but it is emitted by the fleet-view watcher about *other* agents, so
+> mapping it, or `agent_completed`, misattributes another session's state to this one. Both are
+> now deliberately unmodelled.
+
 **`async: true` is supported** on command hooks, which makes a hook structurally incapable of
 blocking, approving, denying, or altering the agent's flow.
 
