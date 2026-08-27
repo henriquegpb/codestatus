@@ -50,9 +50,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if OnboardingWindowController.hasCompleted {
             Task { await notifications.requestAuthorization() }
+            migrateClaudeHooksIfNeeded()
             migrateCodexHooksIfNeeded()
         } else {
             onboarding.showIfNeeded()
+        }
+    }
+
+    /// Brings an older build's Claude Code entries up to the current event list.
+    ///
+    /// A build that registers more events than the installed entries cover reads
+    /// as *not installed*, so without this an existing user would be told to set
+    /// up an agent they already connected, and would silently lose the states
+    /// the new events carry. As with Codex, this only ever refreshes entries
+    /// that are already ours.
+    ///
+    /// It is announced rather than silent for one reason: Claude Code reads its
+    /// hooks when a session starts, so nothing already open picks these up.
+    private func migrateClaudeHooksIfNeeded() {
+        let installer = ClaudeHookInstaller(paths: RuntimePaths())
+        do {
+            guard try installer.needsMigration() else { return }
+            _ = try installer.install()
+            logger.info("refreshed Claude Code hooks onto the current event list")
+            notifications.postSetupNotice(
+                title: "Claude Code hooks updated",
+                body: "CodeStatus now sees tool failures and MCP questions. "
+                    + "Restart your Claude Code sessions to pick them up.",
+                identifier: "co.codestatus.setup.claude-migrated"
+            )
+        } catch {
+            logger.error("Claude hook migration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

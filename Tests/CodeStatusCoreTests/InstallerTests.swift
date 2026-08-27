@@ -704,4 +704,43 @@ struct HookInstallerTests {
             #expect(surgeon.arrayElements(atPath: ["hooks", event])?.count == 1)
         }
     }
+
+    /// The path every already-installed user takes when this build ships: their
+    /// settings carry our entries for an older, shorter event list. They must be
+    /// recognised as ours and topped up — not read as "never connected Claude",
+    /// which would put an agent they already set up back in front of them.
+    @Test("An install predating the newer events is topped up, not treated as absent")
+    func shorterEventListMigrates() throws {
+        let sandbox = try Sandbox()
+        defer { sandbox.destroy() }
+
+        let claude = ClaudeHookInstaller(paths: sandbox.paths, home: sandbox.home)
+
+        // The shipped 0.2.0 event list, written by the same installer the old
+        // build used — a real older install rather than an edited copy of a new
+        // one.
+        let older = HookInstaller(
+            paths: sandbox.paths,
+            provider: .claudeCode,
+            targetURL: claude.settingsURL,
+            events: ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                     "PermissionRequest", "PermissionDenied", "Notification",
+                     "Stop", "StopFailure", "SessionEnd"]
+        )
+        try older.install()
+        #expect(try older.isInstalled(), "the old list must look installed to the old build")
+
+        #expect(try !claude.isInstalled(), "a shorter list must not read as installed")
+        #expect(try claude.needsMigration(), "but it is ours, so it must be migratable")
+
+        try claude.install()
+        #expect(try claude.isInstalled())
+        #expect(try !claude.needsMigration(), "migration must be idempotent")
+
+        let surgeon = try JSONSurgeon(try #require(sandbox.readClaudeSettings()))
+        for event in ClaudeHookInstaller.events {
+            #expect(surgeon.arrayElements(atPath: ["hooks", event])?.count == 1,
+                    "\(event) should be present exactly once")
+        }
+    }
 }

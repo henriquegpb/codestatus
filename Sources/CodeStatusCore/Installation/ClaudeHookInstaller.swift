@@ -16,14 +16,29 @@ public struct ClaudeHookInstaller: Sendable {
     /// `idle_prompt` subtypes are the only signal for "the agent is waiting on
     /// you" that arrives without a matching tool event. `StopFailure` is
     /// included because a turn that ends in error must not be shown as free.
+    ///
+    /// 2.1.247 offers 31 events, not the 11 this list was drawn from. The ones
+    /// added here earn their place by changing what we can say about a session;
+    /// the rest are deliberately left out, because every registered event is a
+    /// process spawned on the agent's machine. `MessageDisplay` is the clearest
+    /// refusal — it fires per assistant message and tells us nothing a tool
+    /// event does not. See docs/spikes/07-blocking-questions.md.
     public static let events: [String] = [
         "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        // A failing tool emits this *instead of* `PostToolUse`.
+        "PostToolUseFailure",
+        // Closes a parallel batch even if one result went missing.
+        "PostToolBatch",
         "PermissionRequest",
         "PermissionDenied",
         "Notification",
+        // An MCP server asking the user something — the other way a session
+        // blocks on a human without the turn ending.
+        "Elicitation",
+        "ElicitationResult",
         "Stop",
         "StopFailure",
         "SessionEnd",
@@ -71,5 +86,13 @@ public struct ClaudeHookInstaller: Sendable {
 
     public func isInstalled(fileManager: FileManager = .default) throws -> Bool {
         try installer.isInstalled(fileManager: fileManager)
+    }
+
+    /// Whether entries of ours are present but predate the current event list.
+    ///
+    /// This is what a build that registers new events looks like to an existing
+    /// user: not "never set up", but "set up against a shorter list".
+    public func needsMigration(fileManager: FileManager = .default) throws -> Bool {
+        try installer.needsMigration(fileManager: fileManager)
     }
 }
