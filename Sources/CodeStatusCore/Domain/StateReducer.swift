@@ -58,11 +58,37 @@ public enum StateReducer {
         case .userPromptSubmit:
             return .busy
 
-        case .preToolUse, .postToolUse:
+        case .preToolUse:
+            // A question is not work in progress. `AskUserQuestion` and
+            // `ExitPlanMode` block here for exactly as long as the person takes
+            // to answer, so calling them `busy` hides the one moment the user
+            // most needs to see.
+            return event.asksTheUser ? .waitingForInput : .busy
+
+        case .postToolUse, .postToolUseFailure:
+            // The answer arrived; whatever it was, the agent is moving again.
+            // A failing tool emits `PostToolUseFailure` *instead of*
+            // `PostToolUse`, so both have to close the tool use — otherwise a
+            // tool that errors leaves the session sitting on whatever the
+            // permission check last said.
+            return .busy
+
+        case .postToolBatch:
+            // Every tool in the batch has settled. Mostly redundant, and worth
+            // having anyway: it is the one event that still closes a batch when
+            // an individual result was lost.
+            return .busy
+
+        case .elicitation:
+            // An MCP server is asking, which blocks its tool call exactly the
+            // way `AskUserQuestion` blocks the turn.
+            return .waitingForInput
+
+        case .elicitationResult:
             return .busy
 
         case .permissionRequest:
-            return .waitingForApproval
+            return event.asksTheUser ? .waitingForInput : .waitingForApproval
 
         case .permissionDenied:
             // Auto-deny already happened; the agent carries on.
@@ -72,7 +98,6 @@ public enum StateReducer {
             switch event.notificationType {
             case .permissionPrompt: return .waitingForApproval
             case .idlePrompt: return .waitingForInput
-            case .agentCompleted: return .free
             case nil: return nil
             }
 

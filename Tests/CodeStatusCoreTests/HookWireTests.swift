@@ -56,19 +56,70 @@ struct HookPrivacyTests {
     "cwd":"/Users/x/proj"}
     """
 
+    /// The events added for 2.1.247 bring keys the older ones never had, and
+    /// three of them carry content: an MCP server's question text, the schema it
+    /// asked against, and the answer the user typed into it.
+    static let elicitationPayload = """
+    {"session_id":"abc-123",\
+    "hook_event_name":"ElicitationResult",\
+    "mcp_server_name":"elicitprobe",\
+    "mode":"form",\
+    "message":"CONTENT_QUESTION",\
+    "requested_schema":{"properties":{"confirm":{"title":"CONTENT_SCHEMA"}}},\
+    "action":"accept",\
+    "content":{"confirm":"CONTENT_ANSWER"},\
+    "cwd":"/Users/x/proj"}
+    """
+
+    /// A failing tool's payload. `error` is the tool's own output.
+    static let failurePayload = """
+    {"session_id":"abc-123",\
+    "hook_event_name":"PostToolUseFailure",\
+    "tool_name":"Read",\
+    "tool_use_id":"toolu_2",\
+    "is_interrupt":false,\
+    "duration_ms":12,\
+    "error":"CONTENT_ERROR",\
+    "tool_input":{"file_path":"CONTENT_PATH"},\
+    "cwd":"/Users/x/proj"}
+    """
+
+    /// `PostToolBatch` summarises the batch in `tool_calls`, which nests inputs.
+    static let batchPayload = """
+    {"session_id":"abc-123",\
+    "hook_event_name":"PostToolBatch",\
+    "tool_calls":[{"tool_name":"Bash","tool_input":{"command":"CONTENT_BATCH"}}],\
+    "cwd":"/Users/x/proj"}
+    """
+
     @Test("Conversation and tool content never reach the wire", arguments: [
-        stopPayload, toolPayload,
+        stopPayload, toolPayload, elicitationPayload, failurePayload, batchPayload,
     ])
     func contentIsDropped(payload: String) {
         let emitted = line(for: payload)
         for secret in ["CONTENT_ASSISTANT", "CONTENT_COMMAND", "CONTENT_NESTED",
-                       "CONTENT_ARRAY", "CONTENT_DEEP"] {
+                       "CONTENT_ARRAY", "CONTENT_DEEP", "CONTENT_QUESTION", "CONTENT_SCHEMA",
+                       "CONTENT_ANSWER", "CONTENT_ERROR", "CONTENT_PATH", "CONTENT_BATCH"] {
             #expect(!emitted.contains(secret), "leaked \(secret)")
         }
         // Whole keys we never want, content or not.
-        for key in ["transcript_path", "last_assistant_message", "tool_input", "stop_reason"] {
+        for key in ["transcript_path", "last_assistant_message", "tool_input", "stop_reason",
+                    "requested_schema", "tool_calls", "error", "message"] {
             #expect(!emitted.contains(key), "leaked key \(key)")
         }
+    }
+
+    /// The new events are acted on by name alone. Nothing they carry beyond the
+    /// identifiers we already read is needed, so nothing else is allowlisted —
+    /// which is what keeps `message`, `content`, and `error` structurally
+    /// incapable of reaching the socket rather than merely unused.
+    @Test("The new events add no new keys to the allowlist")
+    func newEventsCarryNothingExtra() {
+        let emitted = line(for: Self.elicitationPayload)
+        for key in ["mcp_server_name", "mode", "action", "content"] {
+            #expect(!emitted.contains(key), "leaked key \(key)")
+        }
+        #expect(emitted.contains("\"hook_event_name\":\"ElicitationResult\""))
     }
 
     @Test("The metadata we do need is preserved")
@@ -146,6 +197,47 @@ struct WireDecoderTests {
         let codex = try decode(#"{"v":1,"id":"b","provider":"codex","hook_event_name":"Stop","turn_id":"t1"}"#)
         #expect(codex.providerTurnID == "t1")
         #expect(codex.provider == .codex)
+    }
+
+    /// The payloads below are transcribed from a live 2.1.247 session driven in
+    /// the same mode the VS Code extension uses, with a logging hook on every
+    /// event — see docs/spikes/07-blocking-questions.md. Note what
+    /// `PermissionRequest` does and does not carry: `tool_name` but no
+    /// `tool_use_id`, which is why steps fall back to matching on the name.
+    @Test("A real turn that ends in a question reaches the user, tools and all")
+    func realTurnEndingInAQuestion() throws {
+        let prompt = "ff4aaace-7b9f-45bb-b8fb-8e469712dc52"
+        let session = "2f4e9635-986a-4113-95ce-1538c9c2c491"
+        func wire(_ id: String, _ event: String, _ extra: String = "") -> String {
+            #"{"v":1,"id":"\#(id)","provider":"claudeCode","hook_event_name":"\#(event)","#
+                + #""session_id":"\#(session)","prompt_id":"\#(prompt)","ppid":4242\#(extra)}"#
+        }
+
+        let captured = [
+            wire("1", "UserPromptSubmit"),
+            wire("2", "PreToolUse", #","tool_name":"Bash","tool_use_id":"toolu_01W3XTBwdQ2kzDvy7AcoHbGg""#),
+            wire("3", "PostToolUse", #","tool_name":"Bash","tool_use_id":"toolu_01W3XTBwdQ2kzDvy7AcoHbGg""#),
+            wire("4", "PreToolUse", #","tool_name":"AskUserQuestion","tool_use_id":"toolu_01SxTntvBmV24XFyYSy3tR7r""#),
+            wire("5", "PermissionRequest", #","tool_name":"AskUserQuestion""#),
+            wire("6", "Notification", #","notification_type":"permission_prompt""#),
+        ]
+
+        var registry = SessionRegistry()
+        for json in captured {
+            _ = registry.ingest(try decode(json))
+        }
+
+        let result = try #require(registry.all.first)
+        #expect(result.state == .waitingForInput)
+        #expect(result.state.bucket == .needsYou)
+    }
+
+    @Test("Every event we ask Claude Code to send is one we can decode")
+    func installedEventsAllDecode() {
+        for event in ClaudeHookInstaller.events {
+            #expect(HookEventKind(rawValue: event) != nil,
+                    "registered \(event) but the decoder would reject it")
+        }
     }
 
     @Test("An unknown event is rejected rather than guessed at")

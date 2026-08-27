@@ -18,6 +18,8 @@ private struct EventFactory {
         source: EventSource = .hook,
         at offset: TimeInterval = 0,
         id explicitID: String? = nil,
+        tool: String? = nil,
+        toolUse: String? = nil,
         cwd: String? = nil,
         termProgram: String? = nil,
         errorType: String? = nil
@@ -33,6 +35,8 @@ private struct EventFactory {
             providerSessionID: "sess-abc",
             providerTurnID: resolvedTurn,
             notificationType: notification,
+            toolName: tool,
+            toolUseID: toolUse,
             errorType: errorType,
             cwd: cwd,
             termProgram: termProgram
@@ -137,12 +141,35 @@ struct AttentionTests {
     @Test("Notification subtypes map to distinct states", arguments: [
         (NotificationType.permissionPrompt, AgentState.waitingForApproval),
         (NotificationType.idlePrompt, AgentState.waitingForInput),
-        (NotificationType.agentCompleted, AgentState.free),
     ])
     func notificationSubtypes(type: NotificationType, expected: AgentState) {
         var f = EventFactory()
         let (session, _) = run(newSession(state: .busy), [f.make(.notification, notification: type)])
         #expect(session.state == expected)
+    }
+
+    @Test("A fleet-view subtype about some other agent is never applied to this one")
+    func fleetViewSubtypesAreUnmapped() {
+        // `agent_completed` and `agent_needs_input` describe a background task
+        // or teammate changing band, not the session whose hook fired. They must
+        // not decode into anything this reducer can act on.
+        #expect(NotificationType(rawValue: "agent_completed") == nil)
+        #expect(NotificationType(rawValue: "agent_needs_input") == nil)
+
+        var f = EventFactory()
+        let (session, outcomes) = run(newSession(state: .busy), [f.make(.notification)])
+        #expect(session.state == .busy)
+        #expect(outcomes == [.ignoredUnmapped])
+    }
+
+    @Test("An idle prompt still applies after the turn has stopped")
+    func idlePromptOutranksStop() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.stop, at: 1),
+            f.make(.notification, notification: .idlePrompt, turn: .some(nil), at: 120),
+        ])
+        #expect(session.state == .waitingForInput)
     }
 
     @Test("A failed turn is never counted as free")
@@ -166,6 +193,200 @@ struct AttentionTests {
         ])
         #expect(session.state == .busy)
         #expect(session.lastError == nil)
+    }
+}
+
+// MARK: - Tools that block on an answer
+
+@Suite("State machine — the agent asked a question")
+struct AsksTheUserTests {
+
+    /// The regression that started this: in a real turn the agent runs a tool
+    /// or two before it asks anything, and every one of those tool uses used to
+    /// raise the rank floor high enough to reject the question's own events.
+    @Test("A question is seen even when tools ran earlier in the same turn")
+    func questionAfterEarlierToolUse() {
+        var f = EventFactory()
+        let (session, outcomes) = run(newSession(state: .free), [
+            f.make(.userPromptSubmit),
+            f.make(.preToolUse, at: 1, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.postToolUse, at: 2, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.preToolUse, at: 3, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+            f.make(.permissionRequest, at: 3.1, tool: "AskUserQuestion"),
+        ])
+        #expect(session.state == .waitingForInput)
+        #expect(!outcomes.contains(.ignoredOutOfOrder))
+    }
+
+    @Test("A question reads as input needed, not as an approval")
+    func questionIsNotAnApproval() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+            f.make(.permissionRequest, at: 0.1, tool: "AskUserQuestion"),
+        ])
+        #expect(session.state == .waitingForInput)
+    }
+
+    @Test("A plan waiting for approval reads the same way")
+    func exitPlanModeAsksTheUser() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "ExitPlanMode", toolUse: "toolu_plan"),
+            f.make(.permissionRequest, at: 0.1, tool: "ExitPlanMode"),
+        ])
+        #expect(session.state == .waitingForInput)
+    }
+
+    @Test("An ordinary tool still asks for approval, not for input")
+    func ordinaryToolStillNeedsApproval() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.permissionRequest, at: 0.1, tool: "Bash"),
+        ])
+        #expect(session.state == .waitingForApproval)
+    }
+
+    @Test("Answering the question puts the session back to work")
+    func answeringResumesWork() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+            f.make(.permissionRequest, at: 0.1, tool: "AskUserQuestion"),
+            f.make(.postToolUse, at: 9, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+        ])
+        #expect(session.state == .busy)
+    }
+
+    @Test("Two questions in one turn are both seen")
+    func secondQuestionInSameTurn() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "AskUserQuestion", toolUse: "toolu_ask1"),
+            f.make(.permissionRequest, at: 0.1, tool: "AskUserQuestion"),
+            f.make(.postToolUse, at: 9, tool: "AskUserQuestion", toolUse: "toolu_ask1"),
+            f.make(.preToolUse, at: 10, tool: "AskUserQuestion", toolUse: "toolu_ask2"),
+            f.make(.permissionRequest, at: 10.1, tool: "AskUserQuestion"),
+        ])
+        #expect(session.state == .waitingForInput)
+    }
+
+    /// Hooks are separate processes racing to one socket, and these two are
+    /// milliseconds apart, so the losing order has to be safe too.
+    @Test("A PreToolUse that loses the race to its own PermissionRequest is dropped")
+    func lateProToolUseCannotUnblock() {
+        var f = EventFactory()
+        let (session, outcomes) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.postToolUse, at: 1, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.permissionRequest, at: 2.1, tool: "AskUserQuestion"),
+            f.make(.preToolUse, at: 2, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+        ])
+        #expect(session.state == .waitingForInput)
+        #expect(outcomes.last == .ignoredOutOfOrder)
+    }
+
+    @Test("The delayed permission_prompt cannot relabel a question as an approval")
+    func lateNotificationCannotRelabel() {
+        // Claude Code sends this about six seconds after `PermissionRequest`,
+        // carrying no tool name — long after the question is on screen.
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+            f.make(.permissionRequest, at: 0.1, tool: "AskUserQuestion"),
+            f.make(.notification, notification: .permissionPrompt, at: 6),
+        ])
+        #expect(session.state == .waitingForInput)
+    }
+
+    @Test("The permission_prompt still backstops a PermissionRequest that never arrived")
+    func notificationBacksUpALostHook() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.notification, notification: .permissionPrompt, at: 6),
+        ])
+        #expect(session.state == .waitingForApproval)
+    }
+}
+
+// MARK: - Failures, batches, and MCP questions
+
+@Suite("State machine — the rest of the tool lifecycle")
+struct ToolLifecycleTests {
+
+    /// `PostToolUseFailure` replaces `PostToolUse` rather than accompanying it,
+    /// so without it an approved tool that then errors leaves the session
+    /// sitting on `waitingForApproval` for the rest of the turn.
+    @Test("A tool that errors after approval still returns the session to work")
+    func failureClosesTheToolUse() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "Read", toolUse: "toolu_read"),
+            f.make(.permissionRequest, at: 0.1, tool: "Read"),
+            f.make(.postToolUseFailure, at: 0.4, tool: "Read", toolUse: "toolu_read"),
+        ])
+        #expect(session.state == .busy)
+    }
+
+    @Test("A batch closes even when one tool's own result never arrived")
+    func batchBacksUpALostResult() {
+        var f = EventFactory()
+        let (session, _) = run(newSession(state: .busy), [
+            f.make(.preToolUse, tool: "Bash", toolUse: "toolu_bash"),
+            f.make(.permissionRequest, at: 0.1, tool: "Bash"),
+            // No PostToolUse — pretend the hook was lost.
+            f.make(.postToolBatch, at: 1),
+        ])
+        #expect(session.state == .busy)
+    }
+
+    /// Transcribed from a live run against a stdio MCP server that raises an
+    /// elicitation — see docs/spikes/07-blocking-questions.md. Neither
+    /// `Elicitation` nor `ElicitationResult` carries a tool name or id, so both
+    /// have to ride in the step the tool's permission check opened.
+    @Test("An MCP server's question blocks the session, and its answer releases it")
+    func mcpElicitationBlocks() {
+        var f = EventFactory()
+        let tool = "mcp__elicitprobe__ask_the_human"
+
+        var session = newSession(state: .free)
+        for event in [
+            f.make(.userPromptSubmit),
+            f.make(.preToolUse, at: 1, tool: tool, toolUse: "toolu_mcp"),
+            f.make(.permissionRequest, at: 1.1, tool: tool),
+        ] {
+            session = StateReducer.reduce(session, applying: event).session
+        }
+        #expect(session.state == .waitingForApproval)
+
+        session = StateReducer.reduce(session, applying: f.make(.elicitation, at: 1.2)).session
+        #expect(session.state == .waitingForInput)
+
+        for event in [
+            f.make(.elicitationResult, at: 9),
+            f.make(.postToolUse, at: 9.1, tool: tool, toolUse: "toolu_mcp"),
+            f.make(.postToolBatch, at: 9.2),
+        ] {
+            session = StateReducer.reduce(session, applying: event).session
+        }
+        #expect(session.state == .busy)
+    }
+
+    @Test("A tool failing in one batch does not starve the next tool use")
+    func failureDoesNotStarveTheNextStep() {
+        var f = EventFactory()
+        let (session, outcomes) = run(newSession(state: .free), [
+            f.make(.userPromptSubmit),
+            f.make(.preToolUse, at: 1, tool: "Read", toolUse: "toolu_read"),
+            f.make(.postToolUseFailure, at: 2, tool: "Read", toolUse: "toolu_read"),
+            f.make(.postToolBatch, at: 2.1),
+            f.make(.preToolUse, at: 3, tool: "AskUserQuestion", toolUse: "toolu_ask"),
+            f.make(.permissionRequest, at: 3.1, tool: "AskUserQuestion"),
+        ])
+        #expect(session.state == .waitingForInput)
+        #expect(!outcomes.contains(.ignoredOutOfOrder))
     }
 }
 
