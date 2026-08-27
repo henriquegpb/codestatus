@@ -48,54 +48,121 @@ public struct ControlTarget: Sendable, Codable, Equatable {
 ///
 /// Hooks run concurrently and asynchronously, so delivery order is not
 /// guaranteed. Turn ids are opaque strings with no inherent order, so we assign
-/// each newly seen turn a monotonically increasing sequence number and order
-/// events by `(turnSequence, rank)`.
+/// each newly seen turn a monotonically increasing sequence number.
+///
+/// A turn is not the finest grain that matters, though: one turn contains many
+/// tool uses, and ``AgentEvent/rank`` describes the shape of a *single* one —
+/// `PreToolUse` before `PermissionRequest` before `PostToolUse`. Ordering a
+/// whole turn by rank alone therefore starves every tool use after the first:
+/// once a `PostToolUse` has pushed the floor to 4, the next tool's `PreToolUse`
+/// (2) and `PermissionRequest` (3) are both rejected as out-of-order. That is
+/// invisible while every tool maps to `busy` — and very visible the moment a
+/// tool blocks on the user, because the session sits on `busy` for as long as
+/// the person is being asked a question.
+///
+/// So events are ordered by `(turnSequence, stepSequence, rank)`, where a step
+/// is one tool use. Rank keeps its straggler duty inside a step; steps keep
+/// tool uses from starving each other.
 public struct LogicalClock: Sendable, Codable, Equatable {
     private(set) var turnSequence: Int
     private(set) var lastAppliedRank: Int
     private(set) var currentTurnID: String?
+    private(set) var stepSequence: Int
+    private(set) var currentToolUseID: String?
+    private(set) var currentToolName: String?
 
     public init() {
         turnSequence = 0
         lastAppliedRank = -1
         currentTurnID = nil
+        stepSequence = 0
+        currentToolUseID = nil
+        currentToolName = nil
+    }
+
+    /// Decoded leniently so a snapshot written before steps existed still
+    /// restores: a session that comes back without them simply starts at step 0.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        turnSequence = try container.decode(Int.self, forKey: .turnSequence)
+        lastAppliedRank = try container.decode(Int.self, forKey: .lastAppliedRank)
+        currentTurnID = try container.decodeIfPresent(String.self, forKey: .currentTurnID)
+        stepSequence = try container.decodeIfPresent(Int.self, forKey: .stepSequence) ?? 0
+        currentToolUseID = try container.decodeIfPresent(String.self, forKey: .currentToolUseID)
+        currentToolName = try container.decodeIfPresent(String.self, forKey: .currentToolName)
     }
 
     /// Position of an event in this session's timeline, assigning a new turn
     /// sequence if the event belongs to a turn we have not seen yet.
+    func position(for event: AgentEvent) -> (turn: Int, step: Int, rank: Int) {
+        guard let turnID = event.providerTurnID, turnID != currentTurnID else {
+            return (turnSequence, step(for: event), event.rank)
+        }
+        // A turn we have not seen: it is newer than everything so far, and its
+        // first tool use starts the step count over.
+        return (turnSequence + 1, 0, event.rank)
+    }
+
+    /// Which tool use an event belongs to.
     ///
-    /// Returns `nil` for events that carry no turn and cannot be ordered, which
-    /// the caller treats as "always current".
-    func position(for event: AgentEvent) -> (turn: Int, rank: Int) {
-        guard let turnID = event.providerTurnID else {
-            return (turnSequence, event.rank)
+    /// `PreToolUse` and `PostToolUse` carry `tool_use_id` and identify their step
+    /// exactly. `PermissionRequest` does not — verified against Claude Code
+    /// 2.1.247, which sends only `tool_name` on it — so it is matched by tool
+    /// name instead, which is enough because it always concerns the tool use
+    /// currently in flight. Matching by name also holds the line when the two
+    /// arrive out of order: a `PreToolUse` that loses the race to its own
+    /// `PermissionRequest` lands in the step that request opened, where its
+    /// lower rank rejects it rather than dragging the session back to `busy`.
+    private func step(for event: AgentEvent) -> Int {
+        guard let name = event.toolName else { return stepSequence }
+        guard let id = event.toolUseID else {
+            return name == currentToolName ? stepSequence : stepSequence + 1
         }
-        if turnID == currentTurnID {
-            return (turnSequence, event.rank)
+        guard let current = currentToolUseID else {
+            // The current step was opened by an event carrying no id.
+            return name == currentToolName ? stepSequence : stepSequence + 1
         }
-        // A turn we have not seen: it is newer than everything so far.
-        return (turnSequence + 1, event.rank)
+        return id == current ? stepSequence : stepSequence + 1
     }
 
     /// Whether an event is new enough to apply.
     public func accepts(_ event: AgentEvent) -> Bool {
         if event.isTerminal { return true }
         let pos = position(for: event)
-        if pos.turn > turnSequence { return true }
-        if pos.turn < turnSequence { return false }
+        if pos.turn != turnSequence { return pos.turn > turnSequence }
+        if pos.step != stepSequence { return pos.step > stepSequence }
         return pos.rank >= lastAppliedRank
     }
 
     /// Records that an event was applied.
     public mutating func advance(with event: AgentEvent) {
         let pos = position(for: event)
-        if pos.turn > turnSequence {
+        guard pos.turn >= turnSequence else { return }
+
+        let startsNewTurn = pos.turn > turnSequence
+        let startsNewStep = startsNewTurn || pos.step > stepSequence
+
+        if startsNewTurn {
             turnSequence = pos.turn
             currentTurnID = event.providerTurnID
+            currentToolName = nil
+            currentToolUseID = nil
+        } else if currentTurnID == nil {
+            currentTurnID = event.providerTurnID
+        }
+
+        if startsNewStep {
+            stepSequence = pos.step
             lastAppliedRank = pos.rank
-        } else if pos.turn == turnSequence {
+        } else if pos.step == stepSequence {
             lastAppliedRank = max(lastAppliedRank, pos.rank)
-            if currentTurnID == nil { currentTurnID = event.providerTurnID }
+        }
+
+        // Only a tool event names the step; a Stop or Notification in between
+        // must not erase whose step we are in.
+        if event.toolName != nil {
+            currentToolName = event.toolName
+            currentToolUseID = event.toolUseID
         }
     }
 }

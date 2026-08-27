@@ -299,6 +299,38 @@ struct StatePersistenceTests {
         #expect(restored.controlTarget.hostApplication == .iTerm)
     }
 
+    @Test("A snapshot written before the clock tracked tool uses still restores")
+    func clockFromOlderBuildRestores() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = RuntimePaths(home: home)
+        try paths.createDirectories()
+
+        // Transcribed from a snapshot written by the shipped build: the clock
+        // has only the three fields it had then. Upgrading in place must not
+        // throw away every live session.
+        let older = """
+        {"savedAt":809478201.5,"version":\(StatePersistence.schemaVersion),"sessions":[\
+        {"clock":{"turnSequence":3,"currentTurnID":"76323449-4c98","lastAppliedRank":8},\
+        "id":{"rawValue":"claudeCode:2037f393"},"provider":"claudeCode","state":"free",\
+        "stateConfidence":2,"startedAt":809468744.8,"stateChangedAt":809477670.0,\
+        "lastEventAt":809477670.0,"sourceAdapter":"claudeCodeHook","capabilities":17,\
+        "hasHookEvidence":true,"controlTarget":{"hostApplication":"terminal"},\
+        "hostApplication":"terminal"}]}
+        """
+        try Data(older.utf8).write(to: paths.sessionsSnapshot)
+
+        guard case .restored(let snapshot) = StatePersistence(paths: paths).load() else {
+            Issue.record("expected a snapshot without step fields to still restore")
+            return
+        }
+        let restored = try #require(snapshot.sessions.first)
+        #expect(restored.clock.turnSequence == 3)
+        #expect(restored.clock.lastAppliedRank == 8)
+        #expect(restored.clock.stepSequence == 0)
+        #expect(restored.clock.currentToolUseID == nil)
+    }
+
     @Test("The snapshot file is owner-only, because it lists every repository the user works in")
     func snapshotIsOwnerOnly() throws {
         let home = try makeTestHome()
