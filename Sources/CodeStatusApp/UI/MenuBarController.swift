@@ -23,8 +23,13 @@ final class MenuBarController {
     var onOpenPreferences: (() -> Void)?
     var onQuit: (() -> Void)?
 
-    init(model: HUDModel) {
+    /// Held so the popover can show an update that is waiting for a quiet
+    /// moment, and offer to take it now.
+    private let updates: UpdateCoordinator
+
+    init(model: HUDModel, updates: UpdateCoordinator) {
         self.model = model
+        self.updates = updates
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
         configurePopover()
@@ -132,6 +137,7 @@ final class MenuBarController {
         let hosting = NSHostingController(
             rootView: HUDContentView(
                 model: model,
+                updates: updates,
                 onOpen: { [weak self] in self?.onOpenSession?($0) },
                 onDismiss: { [weak self] in self?.onDismissSession?($0) },
                 onRefresh: { [weak self] in self?.onRefresh?() },

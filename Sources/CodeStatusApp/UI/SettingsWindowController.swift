@@ -74,6 +74,7 @@ final class SettingsModel {
 
 struct SettingsView: View {
     @Bindable var model: SettingsModel
+    var updates: UpdateCoordinator?
     var onOpenSetup: () -> Void
     var onUninstallHooks: () -> Void
 
@@ -107,6 +108,15 @@ struct SettingsView: View {
                     get: { model.launchAtLogin },
                     set: { model.setLaunchAtLogin($0) }
                 ))
+                if let updates {
+                    Toggle("Keep CodeStatus up to date", isOn: Binding(
+                        get: { updates.isEnabled },
+                        set: { updates.isEnabled = $0 }
+                    ))
+                    .help("Installs updates when no agent is working or waiting on you, "
+                        + "then restarts. Sessions are unaffected.")
+                    UpdateStatusRow(updates: updates)
+                }
             }
 
             Section("Agents") {
@@ -138,15 +148,18 @@ struct SettingsView: View {
 final class SettingsWindowController {
     private var window: NSWindow?
     private let model: SettingsModel
+    private let updates: UpdateCoordinator?
     private let onOpenSetup: () -> Void
     private let onUninstallHooks: () -> Void
 
     init(
         model: SettingsModel,
+        updates: UpdateCoordinator? = nil,
         onOpenSetup: @escaping () -> Void,
         onUninstallHooks: @escaping () -> Void
     ) {
         self.model = model
+        self.updates = updates
         self.onOpenSetup = onOpenSetup
         self.onUninstallHooks = onUninstallHooks
     }
@@ -165,6 +178,7 @@ final class SettingsWindowController {
             window.contentViewController = NSHostingController(
                 rootView: SettingsView(
                     model: model,
+                    updates: updates,
                     onOpenSetup: onOpenSetup,
                     onUninstallHooks: onUninstallHooks
                 )

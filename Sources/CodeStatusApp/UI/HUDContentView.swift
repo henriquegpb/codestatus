@@ -9,6 +9,7 @@ import SwiftUI
 /// it looked.
 struct HUDContentView: View {
     @Bindable var model: HUDModel
+    var updates: UpdateCoordinator?
 
     var onOpen: ((AgentSession) -> Void)?
     var onDismiss: ((AgentSession) -> Void)?
@@ -31,6 +32,13 @@ struct HUDContentView: View {
                 ScrollView { list }.frame(height: 560)
             } else {
                 list
+            }
+
+            if let updates, let banner = UpdateBanner.text(for: updates.state) {
+                Divider().opacity(0.5)
+                UpdateBanner(text: banner, canInstallNow: updates.state.isWaitingForQuiet) {
+                    updates.installNow()
+                }
             }
 
             // Full-bleed, unlike the inset dividers between rows: it separates

@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboarding: OnboardingWindowController!
     private var settingsWindow: SettingsWindowController!
     private let settings = SettingsModel()
+    private let updates = UpdateCoordinator()
     private let logger = Logger(subsystem: "co.codestatus", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,7 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         daemon = SessionDaemon(model: model, notifications: notifications)
-        menuBar = MenuBarController(model: model)
+        menuBar = MenuBarController(model: model, updates: updates)
+
+        // "Quiet" is the only precondition for swapping the app underneath the
+        // user, and it means nobody is mid-turn or being asked something. A
+        // session sitting free is fine: relaunching loses nothing it holds.
+        updates.isBusy = { [model] in model.busy > 0 || model.needsYou > 0 }
 
         wireInteractions()
 
@@ -40,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.menuBar.refresh()
         }
         daemon.start()
+        updates.start()
 
         // First run walks the user through permissions and hook installation.
         // On later launches we ask for notification permission directly, since
@@ -123,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         settingsWindow = SettingsWindowController(
             model: settings,
+            updates: updates,
             onOpenSetup: { [weak self] in self?.onboarding.show() },
             onUninstallHooks: { [weak self] in self?.uninstallHooks() }
         )
