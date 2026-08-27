@@ -105,11 +105,20 @@ jobs:
       - name: Duplicate the image under a stable name
         run: cp "dist/CodeStatus-${{ steps.version.outputs.value }}.dmg" dist/CodeStatus.dmg
 
+      # What the in-app updater downloads. A zip rather than the image the
+      # website links to, because unpacking one is a single `ditto` call while a
+      # .dmg needs attach and detach -- two more ways for a self-update to fail
+      # halfway. Built from the stapled bundle, so the copy the updater verifies
+      # carries its notarization ticket offline.
+      - name: Build the update archive
+        run: ditto -c -k --keepParent dist/CodeStatus.app dist/CodeStatus.zip
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/CodeStatus-${{ steps.version.outputs.value }}.dmg
             dist/CodeStatus.dmg
+            dist/CodeStatus.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

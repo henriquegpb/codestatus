@@ -110,6 +110,25 @@ Why the gaps:
   mean writing to a TTY or faking keystrokes, which can land your text in the wrong place. It
   will be enabled only for sessions CodeStatus starts itself through a PTY.
 
+## Updates
+
+CodeStatus updates itself, and tries hard not to be noticed doing it.
+
+Once a day it asks GitHub what the latest release is. If there is a newer one it
+downloads it, checks that the bundle declares the version it promised, and verifies the
+signature against the Developer ID team of the app that is *running* — nested code included, so a
+tampered `codestatus-hook` cannot ride along. Only after all of that passes does anything on disk
+change.
+
+Then it waits. The swap happens when no agent is working or waiting on you, and the app restarts
+into the new version. That costs nothing: sessions live in the agents, their hooks point at a
+binary staged outside the bundle, and the snapshot is reloaded on launch. If your machine is
+never quiet, the menu bar offers a Restart button and you pick the moment.
+
+It disables itself, visibly, when it cannot do this safely: a build that is not Developer ID
+signed, or an app running from a disk image or a translocated path. Turn the whole thing off in
+Settings.
+
 ## How it works
 
 ```
