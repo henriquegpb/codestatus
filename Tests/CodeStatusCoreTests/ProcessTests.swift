@@ -49,6 +49,30 @@ private func spawnShortLivedProcess(seconds: String = "0.2") throws -> Process {
     return process
 }
 
+/// An agent the watcher will believe in, built on this process.
+///
+/// Its pid is our own, which is the point: the watcher subscribes to the exit
+/// of everything a sweep reports, and a pid belonging to nothing fires that
+/// subscription immediately — taking the entry back out of the announced set
+/// and quietly turning any assertion about re-announcement into a test of the
+/// scheduler.
+///
+/// Spawning something real is not an alternative. A copy of `/bin/sleep` named
+/// `codex` is killed by the kernel within milliseconds, because a platform
+/// binary's signature does not survive being moved off the system volume, so
+/// the test ends up measuring a dead process.
+private func selfAsAgent(provider: AgentProvider = .codex) throws -> AgentProcess {
+    let snapshot = try #require(inspector.snapshot(pid: getpid()))
+    return AgentProcess(
+        provider: provider,
+        snapshot: snapshot,
+        hostApplication: .unknown,
+        evidence: .executablePath,
+        workingDirectory: nil,
+        ancestorPIDs: []
+    )
+}
+
 private let inspector = ProcessInspector()
 
 // MARK: - Inspection
@@ -421,6 +445,48 @@ struct ProcessWatcherTests {
         #expect(!watched.contains { $0.pid == getpid() })
         let reported = found.wait(forAtLeast: watched.count, timeout: 2)
         #expect(Set(reported.map(\.pid)) == Set(watched.map(\.pid)))
+    }
+
+    /// The Refresh button's whole job, and for a long time it could not do it.
+    ///
+    /// An ordinary sweep announces each process exactly once, which is right for
+    /// the safety timer and useless to a person who pressed Refresh because a
+    /// session went missing. Their session is not absent because we never saw
+    /// it — it is absent because the app lost it, and a sweep is guaranteed not
+    /// to mention a process it has mentioned before.
+    /// The Refresh button's whole job, and for a long time it could not do it.
+    ///
+    /// A sweep announces each process exactly once — right for the safety timer,
+    /// useless to someone who pressed Refresh because a session went missing.
+    /// Their session is not absent because we never saw it; it is absent because
+    /// the app lost it, and a sweep is guaranteed not to mention a process it
+    /// has mentioned before.
+    @Test("Refresh re-announces agents an ordinary sweep would stay quiet about")
+    func resyncReannouncesWhatSweepWillNot() throws {
+        let agent = try selfAsAgent()
+        let found = Inbox<AgentProcess>()
+        let watcher = ProcessWatcher(
+            configuration: .init(safetySweepInterval: .infinity, sweepOnStart: false),
+            onDiscovered: { found.append($0) }
+        )
+        watcher.discoveryProbe = { [agent] in [agent] }
+        watcher.start()
+        defer { watcher.stop() }
+
+        watcher.sweep()
+        #expect(found.wait(forAtLeast: 1, timeout: 2).count == 1)
+
+        // A second sweep is deliberately silent: nothing here is new.
+        watcher.sweep()
+        usleep(200_000)
+        #expect(found.all.count == 1, "a plain sweep must not repeat itself")
+
+        watcher.resync()
+        #expect(
+            found.wait(forAtLeast: 2, timeout: 2).count == 2,
+            "resync announces a live agent the sweep had already reported"
+        )
+        #expect(found.all.allSatisfy { $0.pid == agent.pid })
     }
 
     @Test("The exit event is derived from pid and start time, so a repeat is one event")

@@ -61,6 +61,16 @@ public final class ProcessWatcher: @unchecked Sendable {
     /// the lock it is already inside.
     private let delivery = DispatchQueue(label: "co.codestatus.process.delivery", qos: .utility)
 
+    /// Test seam: what a sweep sees, in place of the real process table.
+    ///
+    /// Needed because the alternative is a test that spawns something the
+    /// inspector will call an agent, and there is no honest way to do that: a
+    /// copy of `/bin/sleep` under another name is killed by the kernel within
+    /// milliseconds, since a platform binary's signature does not survive being
+    /// moved off the system volume. A test built on one measures a dead process
+    /// and reports whatever the timing gives it. Never set outside tests.
+    var discoveryProbe: (@Sendable () -> [AgentProcess])?
+
     private var sources: [pid_t: DispatchSourceProcess] = [:]
     private var watches: [pid_t: Watch] = [:]
     private var discovered: Set<SessionID> = []
@@ -121,6 +131,25 @@ public final class ProcessWatcher: @unchecked Sendable {
     /// Synchronous, and costs about 4 ms on a machine with 500 processes.
     public func sweep() {
         queue.sync { performSweep() }
+    }
+
+    /// Re-announces every live agent, including ones already reported.
+    ///
+    /// What ``sweep()`` is for is finding processes nobody told us about, so it
+    /// announces each one exactly once and stays quiet thereafter — right for a
+    /// timer, wrong for a person pressing Refresh. Their session is not missing
+    /// because we never saw it; it is missing because the app lost it, and the
+    /// one thing an ordinary sweep guarantees is that it will not mention a
+    /// process it has already mentioned.
+    ///
+    /// Forgetting what has been announced is enough. Nothing downstream is
+    /// harmed by hearing about a session it already has: the registry declines
+    /// to adopt a session it is already tracking.
+    public func resync() {
+        queue.sync {
+            discovered.removeAll()
+            performSweep()
+        }
     }
 
     public var activeWatches: [Watch] {
@@ -185,12 +214,18 @@ public final class ProcessWatcher: @unchecked Sendable {
     }
 
     private func performSweep() {
-        for agent in inspector.discoverAgents() {
-            let isNew = register(pid: agent.pid, startTime: agent.startTime, provider: agent.provider)
+        for agent in discoveryProbe?() ?? inspector.discoverAgents() {
+            // Called for its effect — subscribing to the exit — rather than its
+            // answer. Whether we are already watching the process and whether we
+            // have already announced it are two different facts, and requiring
+            // both here is what made `resync()` impossible: a process is watched
+            // from the first sweep onwards, so nothing could ever be announced
+            // twice no matter what `discovered` said.
+            _ = register(pid: agent.pid, startTime: agent.startTime, provider: agent.provider)
             // Identity carries the start time, so a recycled pid is reported as
             // the new process it is rather than suppressed as a duplicate.
             let identity = SessionID.process(agent.provider, pid: agent.pid, startTime: agent.startTime)
-            guard isNew, discovered.insert(identity).inserted else { continue }
+            guard discovered.insert(identity).inserted else { continue }
             let callback = onDiscovered
             delivery.async { callback(agent) }
         }

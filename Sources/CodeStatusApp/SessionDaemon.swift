@@ -519,7 +519,13 @@ final class SessionDaemon {
         // Receipts first: an install that just happened changes what the
         // silence of every existing session means.
         reloadInstallReceipts()
-        processWatcher?.sweep()
+        // Pressing Refresh is asking for the list to be rebuilt from what is
+        // actually running, which includes undoing dismissals. Keeping them
+        // would make the button unable to serve the most common reason for
+        // reaching for it — a row cleared away by accident — and it would fail
+        // silently, since a suppressed session looks exactly like no session.
+        dismissed.removeAll()
+        processWatcher?.resync()
         publish()
     }
 
