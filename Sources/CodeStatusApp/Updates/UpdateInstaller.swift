@@ -63,7 +63,7 @@ struct UpdateInstaller {
     /// randomised read-only path, so an installer that did not check this would
     /// spend every cycle downloading an update it can never apply.
     func immovability() -> Immovability? {
-        if installedURL.path.contains("/AppTranslocation/") { return .translocated }
+        if AppLocation.isTranslocated(installedURL) { return .translocated }
         let parent = installedURL.deletingLastPathComponent()
         guard FileManager.default.isWritableFile(atPath: parent.path) else {
             return .readOnlyLocation
