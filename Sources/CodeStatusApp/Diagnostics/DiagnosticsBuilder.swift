@@ -16,7 +16,7 @@ struct DiagnosticsBuilder {
     let paths: RuntimePaths
 
     func build() async -> DiagnosticsReport {
-        let adapters = detectAdapters()
+        let adapters = detectAdapters(survey: await AgentDiscovery().survey())
         return DiagnosticsReport(
             appVersion: Self.appVersion,
             systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
@@ -91,59 +91,74 @@ struct DiagnosticsBuilder {
 
     // MARK: - Adapter detection
 
-    private func detectAdapters() -> [AdapterStatus] {
+    /// Reports what the same detection Setup uses found, plus what came back
+    /// over the socket.
+    ///
+    /// The evidence is named rather than reduced to a yes/no, because the
+    /// question a diagnostics export has to answer is "why did it not find my
+    /// Codex", and only the evidence answers that.
+    private func detectAdapters(survey: [AgentProvider: AgentEvidence]) -> [AdapterStatus] {
         var adapters: [AdapterStatus] = []
-        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let evidenceByProvider = daemon.hookEvidence
 
         // Claude Code — one settings file covers both the CLI and the extension,
         // so they share an install state but are listed separately because a user
         // may have only one of them.
         let claudeInstalled = (try? ClaudeHookInstaller(paths: paths).isInstalled()) ?? false
-        let claudeCLI = Self.findExecutable("claude")
+        let claude = survey[.claudeCode] ?? AgentEvidence()
         adapters.append(AdapterStatus(
             name: "Claude Code CLI",
-            state: claudeCLI == nil ? .notInstalled : (claudeInstalled ? .connected : .notConfigured),
-            detail: claudeInstalled ? nil : "Hooks not installed yet",
-            version: claudeCLI.flatMap(Self.version(of:))
+            state: Self.state(
+                found: claude.executable != nil || claude.configDirectory != nil,
+                installed: claudeInstalled,
+                verified: evidenceByProvider[.claudeCode] != nil,
+                needsTrust: false
+            ),
+            detail: Self.detail(claude, installed: claudeInstalled, provider: .claudeCode, evidence: evidenceByProvider),
+            version: claude.executable.flatMap(Self.version(of:))
         ))
 
-        let claudeExtension = Self.findVSCodeExtension(prefix: "anthropic.claude-code")
         adapters.append(AdapterStatus(
             name: "Claude Code for VS Code",
-            state: claudeExtension == nil ? .notInstalled : (claudeInstalled ? .connected : .notConfigured),
-            detail: claudeExtension == nil
+            state: claude.editorExtension == nil
+                ? .notInstalled
+                : (claudeInstalled ? .connected : .notConfigured),
+            detail: claude.editorExtension == nil
                 ? nil
                 : "Shares ~/.claude/settings.json with the CLI",
-            version: claudeExtension
+            version: claude.editorExtension
         ))
 
         // Codex — hooks.json is ours to write, but Codex will not execute
-        // anything in it until the user trusts it through /hooks, and that is
-        // deliberately not something we can check or do for them.
+        // anything in it until the user trusts it through /hooks. We cannot read
+        // that decision, but an event arriving *is* the proof, so a verified
+        // Codex is reported as connected rather than as awaiting trust forever.
         let codexInstalled = (try? CodexHookInstaller(paths: paths).isInstalled()) ?? false
-        let codexCLI = Self.findCodex()
+        let codex = survey[.codex] ?? AgentEvidence()
         adapters.append(AdapterStatus(
             name: "Codex CLI",
-            state: codexCLI == nil
-                ? .notInstalled
-                : (codexInstalled ? .needsVerification : .notConfigured),
-            detail: codexInstalled ? CodexHookInstaller.trustInstructions : "Hooks not installed yet",
-            version: codexCLI.flatMap(Self.version(of:))
+            state: Self.state(
+                found: codex.executable != nil || codex.configDirectory != nil,
+                installed: codexInstalled,
+                verified: evidenceByProvider[.codex] != nil,
+                needsTrust: true
+            ),
+            detail: Self.detail(codex, installed: codexInstalled, provider: .codex, evidence: evidenceByProvider),
+            version: codex.executable.flatMap(Self.version(of:))
         ))
 
         // App-server delivery is confirmed: ~/.codex/logs_2.sqlite records
         // `codex_app_server … hook/started` and `hook/completed` for entries
         // written to ~/.codex/hooks.json. The trust caveat is the CLI's.
-        let codexExtension = Self.findVSCodeExtension(prefix: "openai.chatgpt")
         adapters.append(AdapterStatus(
             name: "Codex for VS Code",
-            state: codexExtension == nil
+            state: codex.editorExtension == nil
                 ? .notInstalled
                 : (codexInstalled ? .needsVerification : .notConfigured),
-            detail: codexExtension == nil
+            detail: codex.editorExtension == nil
                 ? nil
                 : "Runs as app-server, and delivers hooks from ~/.codex/hooks.json in that mode",
-            version: codexExtension
+            version: codex.editorExtension
         ))
 
         adapters.append(AdapterStatus(
@@ -152,30 +167,38 @@ struct DiagnosticsBuilder {
             detail: "Tab targeting uses the public tty property"
         ))
 
-        _ = home
         return adapters
     }
 
-    private static func findExecutable(_ name: String) -> String? {
-        let candidates = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
-            .map { "\($0)/\(name)" }
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    /// An agent whose hooks have actually fired is connected, whatever the
+    /// trust caveat says in the abstract.
+    private static func state(
+        found: Bool,
+        installed: Bool,
+        verified: Bool,
+        needsTrust: Bool
+    ) -> AdapterStatus.State {
+        guard found || installed else { return .notInstalled }
+        guard installed else { return .notConfigured }
+        if verified { return .connected }
+        return needsTrust ? .needsVerification : .connected
     }
 
-    /// Codex is not necessarily on PATH — the desktop app bundles it.
-    private static func findCodex() -> String? {
-        let bundled = "/Applications/Codex.app/Contents/Resources/codex"
-        if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
-        return findExecutable("codex")
-    }
-
-    private static func findVSCodeExtension(prefix: String) -> String? {
-        let directory = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".vscode/extensions")
-        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
-        else { return nil }
-        // Directory names carry the version: `anthropic.claude-code-2.1.240-darwin-arm64`.
-        return entries.filter { $0.hasPrefix(prefix) }.sorted().last
+    private static func detail(
+        _ evidence: AgentEvidence,
+        installed: Bool,
+        provider: AgentProvider,
+        evidence hookEvidence: [AgentProvider: HookEvidence]
+    ) -> String? {
+        if let seen = hookEvidence[provider] {
+            return "Hooks confirmed running — last event \(seen.lastSeen.formatted(.relative(presentation: .named)))"
+        }
+        if !installed {
+            return evidence.isPresent
+                ? "Found (\(evidence.summary.lowercased())) — hooks not installed yet"
+                : "Not found. Setup can still connect it if you have it."
+        }
+        return provider == .codex ? CodexHookInstaller.trustInstructions : "No events received yet"
     }
 
     private static func version(of executable: String) -> String? {

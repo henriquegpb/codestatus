@@ -58,14 +58,22 @@ public final class NotificationCoordinator {
 
     // MARK: - Authorization
 
-    /// Asks for permission, once.
+    /// Asks for permission, once per launch.
     ///
     /// On macOS 26 this silently fails for an unsigned bundle — the request
     /// resolves but nothing is ever delivered. Diagnostics surfaces
     /// ``authorizationStatus()`` for exactly that reason.
+    ///
+    /// - Parameter force: ignores the once-per-launch guard. Setup passes this,
+    ///   because the app already asks at launch, and the guard would otherwise
+    ///   make the button on Setup's notification screen do nothing at all for
+    ///   the user who dismissed that first prompt without answering it — the
+    ///   one case where the status is still `.notDetermined` and macOS *will*
+    ///   ask again. The guard exists to stop the app nagging on its own, not to
+    ///   refuse a request the user made by clicking a button.
     @discardableResult
-    public func requestAuthorization() async -> Bool {
-        guard !didRequestAuthorization else { return await isAuthorized() }
+    public func requestAuthorization(force: Bool = false) async -> Bool {
+        guard force || !didRequestAuthorization else { return await isAuthorized() }
         didRequestAuthorization = true
         registerCategories()
         do {

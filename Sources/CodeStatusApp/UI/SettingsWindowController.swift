@@ -76,7 +76,9 @@ struct SettingsView: View {
     @Bindable var model: SettingsModel
     var updates: UpdateCoordinator?
     var onOpenSetup: () -> Void
+    var onRepairHooks: () -> Void
     var onUninstallHooks: () -> Void
+    var onUninstall: () -> Void
 
     var body: some View {
         Form {
@@ -121,21 +123,48 @@ struct SettingsView: View {
 
             Section("Agents") {
                 HStack {
-                    Text("Connect or reconnect agents").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connect or reconnect agents")
+                        Text("Re-detects every time it opens, and lists agents it did not find.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Open Setup", action: onOpenSetup)
                 }
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Remove CodeStatus hooks")
-                        // Named explicitly because the alternative — deleting the
-                        // app and leaving the entries behind — is the case that
-                        // strands a hook in someone's config forever.
+                        Text("An agent stopped reporting")
+                        // Named for the symptom rather than the mechanism,
+                        // because the alternative people reach for is deleting
+                        // the app and downloading it again.
+                        Text("Re-installs the hooks CodeStatus already owns. Adds nothing new.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Repair", action: onRepairHooks)
+                }
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stop watching my agents")
                         Text("Removes only our entries. Your own hooks are left alone.")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Disconnect", action: onUninstallHooks)
+                }
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Remove CodeStatus from this Mac")
+                        // Offered here as well as in the menu because the
+                        // alternative people reach for — dragging the app to the
+                        // Trash — is the one action that cannot clean up after
+                        // itself, and leaves a hook running in their agent for
+                        // as long as the machine lives.
+                        Text("Deleting the app on its own leaves the hook entries behind.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Uninstall…", action: onUninstall)
                 }
             }
         }
@@ -150,18 +179,24 @@ final class SettingsWindowController {
     private let model: SettingsModel
     private let updates: UpdateCoordinator?
     private let onOpenSetup: () -> Void
+    private let onRepairHooks: () -> Void
     private let onUninstallHooks: () -> Void
+    private let onUninstall: () -> Void
 
     init(
         model: SettingsModel,
         updates: UpdateCoordinator? = nil,
         onOpenSetup: @escaping () -> Void,
-        onUninstallHooks: @escaping () -> Void
+        onRepairHooks: @escaping () -> Void,
+        onUninstallHooks: @escaping () -> Void,
+        onUninstall: @escaping () -> Void
     ) {
         self.model = model
         self.updates = updates
         self.onOpenSetup = onOpenSetup
+        self.onRepairHooks = onRepairHooks
         self.onUninstallHooks = onUninstallHooks
+        self.onUninstall = onUninstall
     }
 
     func show() {
@@ -180,7 +215,9 @@ final class SettingsWindowController {
                     model: model,
                     updates: updates,
                     onOpenSetup: onOpenSetup,
-                    onUninstallHooks: onUninstallHooks
+                    onRepairHooks: onRepairHooks,
+                    onUninstallHooks: onUninstallHooks,
+                    onUninstall: onUninstall
                 )
             )
             self.window = window

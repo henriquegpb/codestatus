@@ -36,9 +36,42 @@ final class SessionDaemon {
     /// both of those paths reload it.
     private var hooksInstalledAt: [AgentProvider: Date] = [:]
 
+    /// Providers whose hook entries are in their config file.
+    ///
+    /// Read rather than inferred from the receipts, because the two disagree in
+    /// the direction that matters: a receipt proves we once wrote the file, not
+    /// that the entries are still there. A user who edited their settings by
+    /// hand, or restored them from a dotfiles repo, has a receipt and no hooks,
+    /// and would otherwise be told to go and trust hooks that are not in the
+    /// file.
+    ///
+    /// Cached for the same reason as ``hooksInstalledAt``: answering it costs
+    /// two file reads and two JSON parses, and `publish` runs on every event.
+    private var connectedProviders: Set<AgentProvider> = []
+
+    /// Which providers have ever actually delivered a hook event to us.
+    ///
+    /// Separate from the install receipts on purpose: those record what we
+    /// wrote, this records what came back. Setup can only claim an agent works
+    /// on the strength of the second one — writing `~/.codex/hooks.json`
+    /// perfectly and having Codex ignore it for want of `/hooks` produces an
+    /// impeccable receipt and total silence.
+    private var evidenceLedger = HookEvidenceLedger()
+    private lazy var evidenceStore = HookEvidenceStore(paths: paths)
+
+    var hookEvidence: [AgentProvider: HookEvidence] { evidenceLedger.table }
+
+    /// Fired the first time a provider is heard from, so a setup screen waiting
+    /// on exactly that can stop waiting.
+    var onProviderVerified: ((AgentProvider) -> Void)?
+
     /// So the "Codex is not reporting" notice is posted once per run rather
     /// than on every sweep that re-observes the same silent session.
     private var didWarnAboutCodexTrust = false
+
+    /// Which set of unconnected agents we have already mentioned, so the notice
+    /// returns if a *different* agent appears but never repeats itself.
+    private var didWarnAboutUnconnected: Set<String> = []
 
     /// Sessions the user dismissed by hand, so process discovery does not
     /// immediately re-adopt what they just cleared away.
@@ -82,6 +115,7 @@ final class SessionDaemon {
         }
 
         reloadInstallReceipts()
+        evidenceLedger = HookEvidenceLedger(evidenceStore.load())
         restoreSnapshot()
         startSocketServer()
         startProcessWatcher()
@@ -182,6 +216,7 @@ final class SessionDaemon {
     // MARK: - Applying evidence
 
     private func apply(_ event: AgentEvent) {
+        if event.source == .hook { recordHookEvidence(for: event.provider) }
         let results = registry.ingest(event)
         // A hook event is the session telling us it is alive. Honouring a
         // dismissal past that point would mean hiding a working session, which
@@ -195,6 +230,26 @@ final class SessionDaemon {
             }
         }
         handle(results)
+    }
+
+    /// Notes that a provider's hooks are demonstrably running.
+    ///
+    /// The write is skipped on all but the first event and the occasional
+    /// refresh — see ``HookEvidenceStore/writeInterval`` — because this sits on
+    /// the path every tool call takes.
+    private func recordHookEvidence(for provider: AgentProvider) {
+        let outcome = evidenceLedger.record(provider)
+        if outcome.shouldPersist {
+            do {
+                try evidenceStore.save(evidenceLedger.table)
+            } catch {
+                logger.error("could not record hook evidence: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if outcome.isFirstEver {
+            logger.info("first hook event from \(provider.rawValue, privacy: .public)")
+            onProviderVerified?(provider)
+        }
     }
 
     /// Ends any session whose process is no longer there.
@@ -445,9 +500,11 @@ final class SessionDaemon {
         UnreportedDiagnosis.diagnose(
             sessions: registry.unreported,
             hooksInstalledAt: hooksInstalledAt,
+            connectedProviders: connectedProviders,
             now: now
         )
     }
+
 
     private func publish(_ now: Date = Date()) {
         let diagnosis = currentDiagnosis(now)
@@ -477,6 +534,15 @@ final class SessionDaemon {
         installed[.claudeCode] = receipts[ClaudeHookInstaller(paths: paths).settingsURL.path]?.installedAt
         installed[.codex] = receipts[CodexHookInstaller(paths: paths).hooksURL.path]?.installedAt
         hooksInstalledAt = installed
+
+        var connected: Set<AgentProvider> = []
+        if (try? ClaudeHookInstaller(paths: paths).isInstalled()) == true {
+            connected.insert(.claudeCode)
+        }
+        if (try? CodexHookInstaller(paths: paths).isInstalled()) == true {
+            connected.insert(.codex)
+        }
+        connectedProviders = connected
     }
 
     /// Tells the user once that Codex is running but silent.
@@ -487,6 +553,14 @@ final class SessionDaemon {
     /// same message persistently; this is what reaches someone who is not
     /// looking at it.
     private func warnAboutCodexTrustIfNeeded(_ diagnosis: UnreportedDiagnosis) {
+        // "Never connected" first: pointing someone at /hooks when their
+        // hooks.json has no entries sends them to a screen that correctly
+        // reports zero, which is how a user ends up concluding the app is
+        // broken rather than unconfigured.
+        if !diagnosis.notConnected.isEmpty {
+            warnAboutUnconnectedAgents(diagnosis.notConnected)
+            return
+        }
         guard diagnosis.codexAwaitingTrust > 0, !didWarnAboutCodexTrust else { return }
         didWarnAboutCodexTrust = true
         logger.notice("codex sessions running with untrusted hooks")
@@ -495,6 +569,25 @@ final class SessionDaemon {
             body: "Codex only runs hooks you have trusted. Run /hooks in Codex "
                 + "and trust the CodeStatus entries.",
             identifier: "co.codestatus.setup.codex-untrusted"
+        )
+    }
+
+    /// Tells the user, once per set of agents, that one is running unwatched.
+    ///
+    /// Deliberately not self-healing. We know the agent is there and we know
+    /// which file would connect it, and writing that file because we noticed is
+    /// precisely the thing this app promises never to do. So it points at Setup
+    /// and stops.
+    private func warnAboutUnconnectedAgents(_ providers: [AgentProvider: Int]) {
+        let names = providers.keys.map(\.displayName).sorted()
+        guard didWarnAboutUnconnected != Set(names) else { return }
+        didWarnAboutUnconnected = Set(names)
+        logger.notice("unconnected agents running: \(names.joined(separator: ", "), privacy: .public)")
+        notifications.postSetupNotice(
+            title: "\(names.formatted(.list(type: .and))) isn’t connected",
+            body: "It is running on this Mac and CodeStatus is not watching it. "
+                + "Open Settings › Agents › Open Setup to connect it.",
+            identifier: "co.codestatus.setup.unconnected.\(names.joined(separator: "+"))"
         )
     }
 

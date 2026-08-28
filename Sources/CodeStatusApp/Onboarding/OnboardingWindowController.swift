@@ -30,6 +30,36 @@ final class OnboardingWindowController {
         show()
     }
 
+    /// Reopens Setup from the beginning, whatever state the flow was left in.
+    ///
+    /// The model outlives the window, so without this the second visit reopened
+    /// on whatever screen the first one ended on — for a completed run, the
+    /// final "Ready" page with one Done button, no Back, and no re-detection.
+    /// That made Settings › Open Setup a dead end for exactly the users who
+    /// needed it: the ones whose agent was missed the first time.
+    ///
+    /// From the beginning, and not from the agent list, because Setup is this
+    /// app's one recovery path and any step in it can be the broken one. The
+    /// notification permission is the case that proves it: denied at first run,
+    /// never asked again by macOS, and reachable from a flow entered at
+    /// detection only by pressing Back — a strange thing to ask of someone who
+    /// just opened a setup flow. Three Continue clicks is not friction worth
+    /// reintroducing a dead end for.
+    func reopen() {
+        show()
+        model.restart()
+    }
+
+    /// Fed by the daemon, so the verification screen updates live.
+    func markVerified(_ provider: AgentProvider) {
+        model.markVerified(provider)
+    }
+
+    @discardableResult
+    func repairConnectedAgents() -> [AgentProvider] {
+        model.repairConnectedAgents()
+    }
+
     func show() {
         if window == nil {
             let window = NSWindow(

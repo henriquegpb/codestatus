@@ -24,6 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // here keeps `swift run` behaving the same as the bundle.
         NSApp.setActivationPolicy(.accessory)
 
+        // Asked before anything is staged or bound, because the answer decides
+        // which process the user ends up with. A relocated copy is a different
+        // process at a different path, and setting this one up first would leave
+        // its socket and its staged binaries behind for no one.
+        if ApplicationsRelocator.offerIfNeeded() {
+            NSApp.terminate(nil)
+            return
+        }
+
+        observeSecondLaunches()
         installHookBinaryIfNeeded()
 
         opener = SessionOpener()
@@ -55,13 +65,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.daemon.refreshAdapters()
             self?.logger.info("onboarding completed")
         }
+        // Setup's last screen waits to be proven right rather than declaring
+        // victory on a successful write, so it needs to hear about the first
+        // event from each provider as it happens.
+        daemon.onProviderVerified = { [weak self] provider in
+            self?.onboarding.markVerified(provider)
+        }
+
         if OnboardingWindowController.hasCompleted {
             Task { await notifications.requestAuthorization() }
             migrateClaudeHooksIfNeeded()
             migrateCodexHooksIfNeeded()
+            Task { await self.noticeNewlyInstalledAgents() }
         } else {
             onboarding.showIfNeeded()
         }
+    }
+
+    /// Answers a second launch by showing this copy's Settings window.
+    ///
+    /// Without it, opening a second copy would look like nothing happening at
+    /// all: the newcomer exits immediately, and this one is a menu bar app with
+    /// no window to bring forward. "Nothing happened" is what sends someone
+    /// looking for a third copy to download.
+    private func observeSecondLaunches() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: SingleInstance.showRequest,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.logger.info("a second copy was launched; showing this one")
+                self?.settingsWindow?.show()
+            }
+        }
+    }
+
+    /// Tells the user when an agent has appeared since they last ran Setup.
+    ///
+    /// Setup happens once, and installing a second agent afterwards is normal —
+    /// but nothing used to re-examine the machine, so that agent stayed
+    /// unwatched forever with no hint that anything was missing. The same sweep
+    /// catches the case Setup itself got wrong: an agent we failed to detect
+    /// then, and can detect now.
+    ///
+    /// It only ever notifies. Writing to an agent's configuration because we
+    /// noticed it exists would be the one thing this app has promised not to do.
+    private func noticeNewlyInstalledAgents() async {
+        let survey = await AgentDiscovery().survey()
+        let paths = RuntimePaths()
+        var unconnected: [String] = []
+
+        for provider in AgentDiscovery.supportedProviders {
+            guard survey[provider]?.isPresent == true else { continue }
+            let installed: Bool
+            switch provider {
+            case .claudeCode: installed = (try? ClaudeHookInstaller(paths: paths).isInstalled()) ?? false
+            case .codex: installed = (try? CodexHookInstaller(paths: paths).isInstalled()) ?? false
+            case .generic: continue
+            }
+            if !installed { unconnected.append(provider.displayName) }
+        }
+
+        guard !unconnected.isEmpty else { return }
+        let key = unconnected.sorted().joined(separator: "+")
+
+        // Said once per distinct set of agents, and remembered across launches.
+        // Declining to connect an agent is a legitimate choice, and an app that
+        // reopens the same argument at every login is one people quit.
+        let defaultsKey = "co.codestatus.noticedUnconnected"
+        guard UserDefaults.standard.string(forKey: defaultsKey) != key else { return }
+        UserDefaults.standard.set(key, forKey: defaultsKey)
+
+        logger.info("found unconnected agents: \(key, privacy: .public)")
+        notifications.postSetupNotice(
+            title: "\(unconnected.sorted().formatted(.list(type: .and))) is not connected",
+            body: "CodeStatus found it on this Mac but is not watching it. "
+                + "Open Settings › Agents › Open Setup to connect it.",
+            identifier: "co.codestatus.setup.unconnected.\(key)"
+        )
+    }
+
+    /// Re-stages the hook binaries and re-runs every install that is already
+    /// ours.
+    ///
+    /// One button for "it stopped working and I do not know why" — the state
+    /// people otherwise resolve by deleting the app and downloading it again,
+    /// which is both worse and, for the failures that actually happen, not even
+    /// a fix. Safe to press at any time: staging is a byte comparison and an
+    /// install is idempotent, and an agent the user never connected is left
+    /// alone, so it can never quietly opt anyone in.
+    private func repairHooks() {
+        installHookBinaryIfNeeded()
+        let repaired = onboarding.repairConnectedAgents()
+        daemon.refreshAdapters()
+        logger.info("repair touched: \(repaired.map(\.rawValue).joined(separator: ", "), privacy: .public)")
+
+        let names = repaired.map(\.displayName)
+        let mentionsCodex = repaired.contains(.codex)
+        notifications.postSetupNotice(
+            title: names.isEmpty ? "Nothing to repair" : "Reconnected \(names.joined(separator: " and "))",
+            body: names.isEmpty
+                ? "No CodeStatus hooks are installed yet. Open Setup to connect an agent."
+                : "Start a new session to pick them up."
+                    + (mentionsCodex ? " Codex also needs you to run /hooks again." : ""),
+            identifier: "co.codestatus.setup.repaired"
+        )
     }
 
     /// Brings an older build's Claude Code entries up to the current event list.
@@ -131,8 +240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = SettingsWindowController(
             model: settings,
             updates: updates,
-            onOpenSetup: { [weak self] in self?.onboarding.show() },
-            onUninstallHooks: { [weak self] in self?.uninstallHooks() }
+            onOpenSetup: { [weak self] in self?.onboarding.reopen() },
+            onRepairHooks: { [weak self] in self?.repairHooks() },
+            onUninstallHooks: { [weak self] in self?.uninstallHooks() },
+            onUninstall: { Uninstaller.run() }
         )
         settings.onChange = { [weak self] in self?.applySettings() }
         applySettings()
@@ -144,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onQuit = { NSApp.terminate(nil) }
         menuBar.onOpenDiagnostics = { [weak self] in self?.diagnostics.show() }
         menuBar.onOpenPreferences = { [weak self] in self?.settingsWindow.show() }
+        menuBar.onUninstall = { Uninstaller.run() }
         // A sweep, not a restart: it finds sessions that started before their
         // hooks were installed, which is the case the button exists for.
         menuBar.onRefresh = { [weak self] in self?.daemon.refreshAdapters() }

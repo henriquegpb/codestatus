@@ -21,6 +21,7 @@ final class MenuBarController {
     var onRefresh: (() -> Void)?
     var onOpenDiagnostics: (() -> Void)?
     var onOpenPreferences: (() -> Void)?
+    var onUninstall: (() -> Void)?
     var onQuit: (() -> Void)?
 
     /// Held so the popover can show an update that is waiting for a quiet
@@ -70,9 +71,19 @@ final class MenuBarController {
         // Deliberately not badged in the bar itself: an icon beside the counts
         // competes with them for the one glance the menu bar gets. The popover
         // carries the warning, and the tooltip carries it here.
-        let codexNote = model.unreportedDiagnosis.codexAwaitingTrust > 0
-            ? "Codex isn’t reporting — run /hooks in Codex to trust CodeStatus"
-            : nil
+        // "Never connected" outranks "not trusted": it is the more fundamental
+        // problem, and pointing someone at /hooks when the file has no entries
+        // sends them to a screen that correctly reports nothing.
+        let codexNote: String?
+        if !model.unreportedDiagnosis.notConnected.isEmpty {
+            let names = model.unreportedDiagnosis.notConnected.keys
+                .map(\.displayName).sorted().formatted(.list(type: .and))
+            codexNote = "\(names) is running but not connected — open CodeStatus Settings › Agents"
+        } else if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
+            codexNote = "Codex isn’t reporting — run /hooks in Codex to trust CodeStatus"
+        } else {
+            codexNote = nil
+        }
 
         if groups.isEmpty {
             button.attributedTitle = NSAttributedString(
@@ -182,6 +193,15 @@ final class MenuBarController {
         menu.addItem(preferences)
 
         menu.addItem(.separator())
+        // Beside Quit because that is where someone looks when they are done
+        // with an app — and reaching for the Trash instead is what strands a
+        // hook entry in their agent's configuration forever.
+        let uninstall = NSMenuItem(
+            title: "Uninstall CodeStatus…", action: #selector(uninstall), keyEquivalent: ""
+        )
+        uninstall.target = self
+        menu.addItem(uninstall)
+
         let quit = NSMenuItem(title: "Quit CodeStatus", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -195,5 +215,6 @@ final class MenuBarController {
 
     @objc private func openDiagnostics() { onOpenDiagnostics?() }
     @objc private func openPreferences() { onOpenPreferences?() }
+    @objc private func uninstall() { onUninstall?() }
     @objc private func quit() { onQuit?() }
 }

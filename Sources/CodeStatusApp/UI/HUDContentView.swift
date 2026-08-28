@@ -67,6 +67,12 @@ struct HUDContentView: View {
                     Divider().opacity(0.15)
                 }
             }
+            // Before the trust callout, because it is the more fundamental
+            // problem: there is nothing in the file to trust.
+            if !model.unreportedDiagnosis.notConnected.isEmpty {
+                NotConnectedCallout(providers: model.unreportedDiagnosis.notConnected)
+                    .padding(.top, model.sessions.isEmpty ? 0 : 8)
+            }
             if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
                 CodexTrustCallout(count: model.unreportedDiagnosis.codexAwaitingTrust)
                     .padding(.top, model.sessions.isEmpty ? 0 : 8)
@@ -120,6 +126,51 @@ struct HUDContentView: View {
             .help("They started before hooks were installed. Agents read their hook configuration at session start, so a new session will report normally.")
             .padding(.vertical, 3)
         }
+    }
+}
+
+// MARK: - Never connected
+
+/// Says that an agent is running that CodeStatus was never set up to watch.
+///
+/// The most explainable silence there is, and for a long time the least
+/// explained: detection used a short list of binary directories, so an agent
+/// installed anywhere else was never offered during setup, never connected, and
+/// then ran in front of the user reporting nothing at all. The app looked
+/// broken, the agent looked fine, and the popover said nothing that would have
+/// pointed at the difference.
+private struct NotConnectedCallout: View {
+    let providers: [AgentProvider: Int]
+
+    private var names: String {
+        providers.keys
+            .map(\.displayName)
+            .sorted()
+            .formatted(.list(type: .and))
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(names) is running but not connected")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("CodeStatus has no hooks installed for it. Open Settings › Agents › Open Setup.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.orange.opacity(0.12))
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
