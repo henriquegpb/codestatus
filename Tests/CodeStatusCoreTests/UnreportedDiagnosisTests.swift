@@ -99,18 +99,60 @@ struct UnreportedDiagnosisTests {
         #expect(diagnosis.unexplained == 1)
     }
 
-    /// With no receipt there is no timeline to date the session against, and
-    /// inventing one would be how a wrong instruction reaches the user.
-    @Test func withNoInstallReceiptNothingIsConcluded() {
+    /// An agent with no hooks in its config file is the one silence that
+    /// explains itself completely — and it is the state a user lands in when
+    /// setup failed to detect their agent at all.
+    ///
+    /// Telling them to run `/hooks` here would send them to a screen that
+    /// correctly reports zero entries, which is exactly the loop this
+    /// distinction exists to break.
+    @Test func anAgentThatWasNeverConnectedIsNamedAsSuch() {
         let session = silentSession(.codex, startedRelativeToInstall: 60)
         let diagnosis = UnreportedDiagnosis.diagnose(
             sessions: [session],
             hooksInstalledAt: [:],
+            connectedProviders: [],
+            now: installedAt.addingTimeInterval(300)
+        )
+
+        #expect(diagnosis.notConnected == [.codex: 1])
+        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.unexplained == 0)
+        #expect(diagnosis.total == 1)
+    }
+
+    /// Hooks in the file but no receipt to date them against — a receipt we
+    /// lost, or a file the user installed some other way. The session is
+    /// genuinely unexplained, and inventing a timeline is how a wrong
+    /// instruction reaches the user.
+    @Test func withHooksInstalledButNoReceiptNothingIsConcluded() {
+        let session = silentSession(.codex, startedRelativeToInstall: 60)
+        let diagnosis = UnreportedDiagnosis.diagnose(
+            sessions: [session],
+            hooksInstalledAt: [:],
+            connectedProviders: [.codex],
             now: installedAt.addingTimeInterval(300)
         )
 
         #expect(diagnosis.unexplained == 1)
+        #expect(diagnosis.notConnected.isEmpty)
         #expect(diagnosis.codexAwaitingTrust == 0)
+    }
+
+    /// A receipt proves we once wrote the file, not that the entries survived.
+    /// Someone who restored `~/.claude/settings.json` from a dotfiles repo has
+    /// the first and not the second.
+    @Test func aReceiptDoesNotOutrankTheFileItself() {
+        let session = silentSession(.claudeCode, startedRelativeToInstall: 60)
+        let diagnosis = UnreportedDiagnosis.diagnose(
+            sessions: [session],
+            hooksInstalledAt: [.claudeCode: installedAt],
+            connectedProviders: [],
+            now: installedAt.addingTimeInterval(300)
+        )
+
+        #expect(diagnosis.notConnected == [.claudeCode: 1])
+        #expect(diagnosis.predatesHooks == 0)
     }
 
     /// A session we never resolved to a process cannot be dated either.

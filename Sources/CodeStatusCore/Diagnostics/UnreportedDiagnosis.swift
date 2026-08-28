@@ -25,6 +25,15 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
     /// still never reported. The user has to run `/hooks` in Codex.
     public var codexAwaitingTrust: Int = 0
 
+    /// Sessions of an agent CodeStatus has never connected at all.
+    ///
+    /// The most explainable silence there is, and the one that used to be filed
+    /// under ``unexplained`` — which is why a user running Codex with no hooks
+    /// installed saw an app that simply did nothing and told them nothing. The
+    /// fix is a trip through Setup, not a trust prompt, and confusing the two
+    /// sends people to a `/hooks` screen that correctly reports zero entries.
+    public var notConnected: [AgentProvider: Int] = [:]
+
     /// Sessions that were already running when their hooks were installed.
     /// A new session fixes these on its own.
     public var predatesHooks: Int = 0
@@ -34,13 +43,23 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
     /// explanation would be invented.
     public var unexplained: Int = 0
 
-    public init(codexAwaitingTrust: Int = 0, predatesHooks: Int = 0, unexplained: Int = 0) {
+    public init(
+        codexAwaitingTrust: Int = 0,
+        notConnected: [AgentProvider: Int] = [:],
+        predatesHooks: Int = 0,
+        unexplained: Int = 0
+    ) {
         self.codexAwaitingTrust = codexAwaitingTrust
+        self.notConnected = notConnected
         self.predatesHooks = predatesHooks
         self.unexplained = unexplained
     }
 
-    public var total: Int { codexAwaitingTrust + predatesHooks + unexplained }
+    public var notConnectedTotal: Int { notConnected.values.reduce(0, +) }
+
+    public var total: Int {
+        codexAwaitingTrust + notConnectedTotal + predatesHooks + unexplained
+    }
 
     public var isEmpty: Bool { total == 0 }
 
@@ -59,16 +78,30 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
     ///     ``SessionRegistry/unreported``.
     ///   - hooksInstalledAt: when each provider's config file was written, from
     ///     the install receipts. A provider missing here has no recorded
-    ///     install, so nothing about it can be concluded.
+    ///     install, so its sessions cannot be dated against one.
     ///   - now: for the settling period.
+    ///   - connectedProviders: providers whose hook entries are in their config
+    ///     file right now. Defaults to whatever has a receipt, which is what
+    ///     every caller meant before this parameter existed.
     public static func diagnose(
         sessions: [AgentSession],
         hooksInstalledAt: [AgentProvider: Date],
+        connectedProviders: Set<AgentProvider>? = nil,
         now: Date = Date()
     ) -> UnreportedDiagnosis {
         var diagnosis = UnreportedDiagnosis()
+        let connected = connectedProviders ?? Set(hooksInstalledAt.keys)
 
         for session in sessions {
+            // First, because it is the only cause that never resolves on its
+            // own: no hooks in the file means no session of this agent will
+            // ever report, however long anyone waits. There is nothing to
+            // settle and no start time worth consulting.
+            guard connected.contains(session.provider) else {
+                diagnosis.notConnected[session.provider, default: 0] += 1
+                continue
+            }
+
             guard let startedAt = session.processStartedAt else {
                 diagnosis.unexplained += 1
                 continue
