@@ -252,6 +252,39 @@ final class SessionDaemon {
         }
     }
 
+    /// Replays anything the hook had to leave on disk.
+    ///
+    /// The spool is the hook's fallback for when it cannot reach the socket, and
+    /// until now it was only ever read during reconciliation — at launch and on
+    /// wake. So a daemon that was running but unreachable never read it, and the
+    /// events piled up unseen while the UI went on displaying whatever state it
+    /// had last heard about, with total confidence.
+    ///
+    /// That is not hypothetical. A second copy of the app binds the socket by
+    /// unlinking whatever is at the path, which takes it away from the daemon
+    /// already listening; the first daemon keeps a descriptor nothing can reach.
+    /// It stayed alive, kept touching the heartbeat — which is precisely what
+    /// permits the hook to keep spooling — and accumulated 302 undelivered
+    /// events over 28 minutes while showing sessions as free that were not.
+    ///
+    /// Reading the spool on the reap cadence closes that. It costs a directory
+    /// listing every ten seconds and it means a daemon can be deaf on the socket
+    /// and still be correct, because the hook's fallback finally has a reader.
+    private func drainSpoolIfNotEmpty() {
+        let report = spool.drain { [weak self] event in
+            self?.apply(event)
+        }
+        guard report.delivered > 0 || report.deferred > 0 else { return }
+        // Worth a line: a healthy machine never gets here, so anything replayed
+        // this way means direct delivery was not working.
+        logger.notice("""
+            replayed \(report.delivered, privacy: .public) spooled events \
+            (\(report.deferred, privacy: .public) deferred) — the socket was not \
+            reachable when they were written
+            """)
+        publish()
+    }
+
     /// Ends any session whose process is no longer there.
     ///
     /// Belt to the kqueue's braces. Every path that should have caught these is
@@ -479,6 +512,7 @@ final class SessionDaemon {
         if ticksSinceReap >= Self.reapInterval {
             ticksSinceReap = 0
             reapDeadSessions()
+            drainSpoolIfNotEmpty()
         }
         let removed = registry.pruneEnded(olderThan: endedLinger, now: now)
         guard removed.isEmpty else {
