@@ -1,0 +1,73 @@
+name: Windows
+
+# The Windows app is a separate deliverable from the macOS one: different
+# language, different runtime, nothing shared at build time. It gets its own
+# workflow so a change to either cannot burn a runner for the other.
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+  pull_request:
+    paths: ["windows/**", ".github/workflows/windows.yml"]
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: windows
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The unit suites need nothing installed: they are plain Node against
+      # source with no dependencies, which is the point of keeping src/core/
+      # free of both Windows and Electron.
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Needs Electron, which is the only dependency in the project and is
+      # ~370 MB. Installed after the cheap suites have already had their say.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The transport suite starts a real daemon on a real named pipe and runs
+      # the hook the way Claude Code would. It is the only place the privacy
+      # guarantee is checked against the bytes on the wire rather than in the
+      # abstract, which is why it runs in CI and not only on a developer's
+      # machine.
+      - name: Transport integration test
+        run: npm run test:transport
+
+      # The macOS side asserts the hook binary does not link Foundation. The
+      # equivalent structural claim here is that the hook stands alone: Claude
+      # Code spawns it by absolute path, and it has to keep working when the
+      # rest of the install is half-updated or broken.
+      - name: Assert the hook has no imports from the app
+        shell: pwsh
+        run: |
+          $offenders = Select-String -Path hook\hook.js -Pattern "require\(['""]\.\." -AllMatches
+          if ($offenders) {
+            Write-Error "hook.js imports from the app tree; see the note at the top of the file"
+            exit 1
+          }
+
+      # No dependency may be added without a deliberate change here. Electron is
+      # the one exception, and it is a devDependency: nothing third-party ends
+      # up in the running app's own code path.
+      - name: Assert there are no runtime dependencies
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          if ($pkg.dependencies) {
+            Write-Error "a runtime dependency was added: $($pkg.dependencies.PSObject.Properties.Name -join ', ')"
+            exit 1
+          }
