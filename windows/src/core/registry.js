@@ -37,6 +37,9 @@ class SessionRegistry {
     // Routes events that identify the session only by process, such as exits
     // reported by the process watcher.
     this.pidIndex = new Map();
+    // Sessions the user explicitly stopped watching. Kept so a later event for
+    // the same session does not resurrect the row they just dismissed.
+    this.dismissed = new Set();
   }
 
   get all() {
@@ -106,6 +109,13 @@ class SessionRegistry {
     const id = this.routeToSessionID(event);
     if (!id) {
       effects.push({ type: 'eventDropped', eventID: event.id, reason: DropReason.unroutable });
+      return effects;
+    }
+
+    // The user dismissed this session. Terminal events still get through, so
+    // the bookkeeping stays correct, but nothing puts the row back.
+    if (this.dismissed.has(id) && !this.sessions.has(id)) {
+      effects.push({ type: 'eventDropped', eventID: event.id, reason: DropReason.sessionAlreadyEnded });
       return effects;
     }
 
@@ -179,7 +189,7 @@ class SessionRegistry {
     if (existing && this.sessions.has(existing)) return null;
 
     const id = sessionIDFromProcess(provider, pid, startTime);
-    if (this.sessions.has(id)) return null;
+    if (this.sessions.has(id) || this.dismissed.has(id)) return null;
 
     const session = makeSession({
       id,
@@ -221,6 +231,22 @@ class SessionRegistry {
       return sessionIDFromProcess(event.provider, event.pid, event.processStartTime || 0);
     }
     return null;
+  }
+
+  // Stop watching one session, at the user's request.
+  //
+  // Remembered rather than merely deleted: the agent is still running and will
+  // keep sending events, and a row that reappears three seconds after you
+  // dismissed it reads as the app ignoring you. The memory has to outlive the
+  // session for the same reason, so it is kept for as long as the app runs —
+  // a handful of strings, bounded by how many times a person clicks.
+  forget(id) {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    this.sessions.delete(id);
+    if (session.pid) this.pidIndex.delete(session.pid);
+    this.dismissed.add(id);
+    return true;
   }
 
   // Removes ended sessions after the grace period.

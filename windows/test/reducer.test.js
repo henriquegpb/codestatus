@@ -506,4 +506,14 @@ test('An ended session leaves the counts', () => {
   assert.strictEqual(registry.visible.length, 0);
 });
 
+test('A dismissed session does not come back on the next event', () => {
+  const registry = new SessionRegistry();
+  registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1' }));
+  assert.strictEqual(registry.visible.length, 1);
+  registry.forget('claudeCode:sess-1');
+  assert.strictEqual(registry.visible.length, 0);
+  registry.apply(ev(HookEventKind.postToolUse, { turn: 't1' }));
+  assert.strictEqual(registry.visible.length, 0, 'dismissing has to stick');
+});
+
 run('reducer');

@@ -252,6 +252,13 @@ class Daemon extends EventEmitter {
     }
   }
 
+  forget(sessionID) {
+    if (!this.registry.forget(sessionID)) return false;
+    this.emit('effects', [{ type: 'sessionRemoved', sessionID }], this.snapshot());
+    this.schedulePersist();
+    return true;
+  }
+
   setScanEnabled(enabled) {
     this.scanEnabled = Boolean(enabled);
     if (this.scanEnabled) this.scanForAgents();
