@@ -4,10 +4,25 @@
 // raises the notifications. Equivalent to AppDelegate + MenuBarController +
 // NotificationCoordinator + SessionDaemon in the macOS app.
 
+const electron = require('electron');
+
+// Claude Code is itself an Electron app and exports ELECTRON_RUN_AS_NODE to the
+// processes it spawns. If that leaks in here, electron.exe runs as plain Node,
+// `require('electron')` yields a path string instead of the API, and the app
+// dies on a property of undefined. Cheap to detect, and the message saves the
+// half hour it otherwise costs. See scripts/start.cmd, which clears it.
+if (typeof electron === 'string' || !electron.app) {
+  process.stderr.write(
+    'CodeStatus: this was launched as plain Node, not as Electron.\n'
+    + 'ELECTRON_RUN_AS_NODE is set in this environment — clear it and try again.\n',
+  );
+  process.exit(1);
+}
+
 const {
   app, Tray, Menu, BrowserWindow, Notification, ipcMain, shell, screen, dialog,
   nativeTheme, systemPreferences,
-} = require('electron');
+} = electron;
 const path = require('path');
 const os = require('os');
 
@@ -21,6 +36,11 @@ const { hostDisplayName } = require('./core/events');
 const installer = require('./install/claude');
 const prefs = require('./core/prefs');
 const { focusProcessWindow } = require('./platform/focus');
+
+// Notifications on Windows are addressed to an application identity, not a
+// process. Without this the toast is attributed to "electron.app.Electron" and
+// clicking it goes nowhere.
+const APP_ID = 'com.codestatus.windows';
 
 const HUD_WIDTH = 380;
 const HUD_MIN_HEIGHT = 120;
@@ -55,6 +75,8 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => showHUD());
 }
+
+app.setAppUserModelId(APP_ID);
 
 // MARK: - Theme
 

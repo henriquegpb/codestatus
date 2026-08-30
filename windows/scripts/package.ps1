@@ -21,7 +21,7 @@ $zip = Join-Path $Destination 'CodeStatus-windows.zip'
 
 $include = @(
     'src', 'hook', 'test', 'scripts',
-    'package.json', 'README.md', '.gitignore', 'CodeStatus.vbs'
+    'package.json', 'README.md', '.gitignore'
 )
 
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) "codestatus-pack-$(Get-Random)"
