@@ -34,6 +34,10 @@ export const FAQ = [
     a: "No. There is no network code in the product at all — no account, no server, no telemetry. The hook copies an allowlist of metadata such as session id, event name and working directory, and walks past everything else without ever reading those bytes.",
   },
   {
+    q: "Does it work on Windows?",
+    a: "Yes, as a separate build that lives in the system tray. It is a second implementation rather than a port of the binary — Node and Electron instead of Swift — and it tracks Claude Code with the same state machine and the same guarantees about never guessing. It does not support Codex yet, and the installer is not code-signed, so Windows will warn once on first run.",
+  },
+  {
     q: "Does it support Cursor, Windsurf, or Gemini CLI?",
     a: "Not today. It supports Claude Code and Codex, because it depends on official lifecycle hooks and those are the agents that expose them in the form it needs.",
   },

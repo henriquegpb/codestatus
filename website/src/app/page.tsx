@@ -5,7 +5,6 @@ import {
   Clock,
   Cpu,
   CircleHelp,
-  Download,
   EyeOff,
   FileCode,
   ListFilter,
@@ -24,6 +23,7 @@ import { GrainientField } from "@/components/site-background";
 import { Section, Claims } from "@/components/section";
 import { CapabilityMatrix } from "@/components/capability-matrix";
 import { IconSwapButton } from "@/components/icon-swap-button";
+import { DownloadButtons } from "@/components/download-buttons";
 import { Faq } from "@/components/faq";
 
 /** Exactly what the hook binary is allowed to copy. */
@@ -83,21 +83,8 @@ export default function Home() {
             done, or needs you.
           </p>
 
-          <div className="mt-9 flex flex-wrap items-center gap-4">
-            <IconSwapButton
-              href={SITE.download}
-              label="Download for macOS"
-              variant="primary"
-              icon={<Download className="size-4" strokeWidth={2} />}
-            />
-            <IconSwapButton
-              href={SITE.repo}
-              label="View source"
-              icon={<Image src={githubMark} alt="" width={16} height={16} aria-hidden />}
-            />
-            <span className="font-mono text-xs text-muted">
-              {SITE.requirements}
-            </span>
+          <div className="mt-9">
+            <DownloadButtons />
           </div>
 
           {/*
@@ -319,18 +306,8 @@ CodeStatus daemon
               Free and MIT licensed. Onboarding installs the hooks and leaves the
               rest of your config untouched.
             </p>
-            <div className="mt-8 flex flex-wrap justify-center gap-4">
-              <IconSwapButton
-                href={SITE.download}
-                label="Download for macOS"
-                variant="primary"
-                icon={<Download className="size-4" strokeWidth={2} />}
-              />
-              <IconSwapButton
-                href={`${SITE.repo}#building`}
-                label="Build from source"
-                icon={<Image src={githubMark} alt="" width={16} height={16} aria-hidden />}
-              />
+            <div className="mt-8">
+              <DownloadButtons align="center" showRequirements={false} />
             </div>
             </div>
           </div>
