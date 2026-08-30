@@ -178,21 +178,38 @@ function buildLine(fields) {
   return `${JSON.stringify({ ...envelope, ...fields })}\n`;
 }
 
+// Sends one line and waits for the pipe to actually take it.
+//
+// `end` rather than `write` + `destroy`: the write callback fires when the data
+// has been handed to the OS, not when the peer has read it, and destroy() aborts
+// the pipe rather than closing it. Together those dropped the occasional event
+// with no error anywhere — the failure mode this whole file exists to avoid.
+// `end` sends a FIN and the 'close' event is the acknowledgement that the
+// buffer drained.
 function connectAndSend(pipe, line) {
   return new Promise((resolve) => {
     let settled = false;
+    let wrote = false;
+
+    const socket = net.connect(pipe);
+
     const finish = (ok) => {
       if (settled) return;
       settled = true;
       try { socket.destroy(); } catch { /* ignore */ }
       resolve(ok);
     };
-    const socket = net.connect(pipe);
+
     socket.setTimeout(PIPE_TIMEOUT_MS, () => finish(false));
     socket.on('error', () => finish(false));
     socket.on('connect', () => {
-      socket.write(line, () => finish(true));
+      wrote = true;
+      socket.end(line);
     });
+    // Resolved on close rather than on the write callback: only by then has the
+    // pipe drained what we handed it.
+    socket.on('close', (hadError) => finish(wrote && !hadError));
+
     const guard = setTimeout(() => finish(false), PIPE_TIMEOUT_MS);
     guard.unref();
   });

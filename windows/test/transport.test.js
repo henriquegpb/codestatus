@@ -169,7 +169,32 @@ function waitFor(predicate, timeoutMs = 5000) {
     assert.strictEqual(s.hasHookEvidence, true);
   });
 
-  // --- 3. the spool, when the daemon is away --------------------------------
+  // --- 3. delivery ----------------------------------------------------------
+
+  // Regression. The hook used to resolve on the write callback and then call
+  // destroy(), which fires when the data reaches the OS rather than the peer
+  // and aborts the pipe rather than closing it. Events went missing now and
+  // then, with no error anywhere. Twenty back-to-back deliveries is enough to
+  // catch it: it never lost all of them, only some.
+  const burstSession = `burst-${Date.now()}`;
+  const BURST = 20;
+  const before = seenLines.length;
+  for (let i = 0; i < BURST; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await runHook({
+      hook_event_name: 'PreToolUse',
+      session_id: burstSession,
+      turn_id: `turn-${i}`,
+      tool_name: 'Read',
+      ...SECRETS,
+    });
+  }
+  await waitFor(() => seenLines.length - before >= BURST, 8000).catch(() => {});
+  check('every event in a burst is delivered, not most of them', () => {
+    assert.strictEqual(seenLines.length - before, BURST);
+  });
+
+  // --- 4. the spool, when the daemon is away --------------------------------
 
   daemon.stop();
   const offlineSession = `off-${Date.now()}`;
