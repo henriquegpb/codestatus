@@ -138,13 +138,24 @@ test('Notification subtypes map to distinct states', () => {
   const cases = [
     [NotificationType.permissionPrompt, AgentState.waitingForApproval],
     [NotificationType.idlePrompt, AgentState.waitingForInput],
-    [NotificationType.agentCompleted, AgentState.free],
   ];
   for (const [type, expected] of cases) {
     const s = newSession();
     apply(s, [ev(HookEventKind.notification, { notificationType: type })]);
     assert.strictEqual(s.state, expected, `${type} should become ${expected}`);
   }
+});
+
+test('agent_completed is ignored — it is about a different session', () => {
+  // The fleet-view watcher raises it when *some other* agent changes band.
+  // Acting on it marks this session free because a different one finished.
+  const s = newSession();
+  apply(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
+  const outcomes = apply(s, [
+    ev(HookEventKind.notification, { notificationType: 'agent_completed' }),
+  ]);
+  assert.strictEqual(outcomes[0], Outcome.ignoredUnmapped);
+  assert.strictEqual(s.state, AgentState.busy);
 });
 
 test('An unknown Notification subtype is ignored, not guessed', () => {

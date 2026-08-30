@@ -30,13 +30,20 @@ const HookEventKind = Object.freeze({
 
 const KNOWN_EVENT_KINDS = new Set(Object.values(HookEventKind));
 
-// The notification_type values Claude Code actually emits today. Unknown values
-// have to be a no-op rather than an error — that is what keeps the app
-// compatible when new types appear.
+// The `notification_type` values we act on.
+//
+// Claude Code 2.1.247 emits fourteen. Only the two that describe *this*
+// session's state are modelled; everything else is deliberately absent so it
+// decodes to null and no-ops.
+//
+// `agent_needs_input` and `agent_completed` are the trap in that list. Both
+// read like the signal we want, and neither is about the session whose hook
+// fired: they come from the fleet-view watcher and describe some *other* agent
+// changing band. Acting on them would mark this session free, or blocked,
+// because a different one did.
 const NotificationType = Object.freeze({
   permissionPrompt: 'permission_prompt',
   idlePrompt: 'idle_prompt',
-  agentCompleted: 'agent_completed',
 });
 
 const AgentProvider = Object.freeze({
@@ -97,7 +104,6 @@ function rankOf(event) {
       switch (event.notificationType) {
         case NotificationType.permissionPrompt:
         case NotificationType.idlePrompt: return 3;
-        case NotificationType.agentCompleted: return 8;
         default: return 3;
       }
     case HookEventKind.postToolUse: return 4;

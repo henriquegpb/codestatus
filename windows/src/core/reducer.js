@@ -50,7 +50,6 @@ function targetState(event) {
       switch (event.notificationType) {
         case NotificationType.permissionPrompt: return AgentState.waitingForApproval;
         case NotificationType.idlePrompt: return AgentState.waitingForInput;
-        case NotificationType.agentCompleted: return AgentState.free;
         default: return null;
       }
 
