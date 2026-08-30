@@ -18,6 +18,8 @@
 // spawns this file by absolute path from settings.json, and it has to keep
 // working even if the rest of the install is half-updated or broken. The two
 // small duplications that buys — the app data path and the host detection — are
+// each a handful of lines, and both are noted where they are mirrored. The two
+// small duplications that buys — the app data path and the host detection — are
 // each a handful of lines, and both are noted where they are mirrored.
 //
 // The one thing that is not a port: the macOS hook is a compiled Foundation-free
@@ -60,6 +62,7 @@ const ALLOWED_KEYS = new Set([
   'model',
 ]);
 
+// Mirrors src/platform/paths.js. Kept here rather than required, see the header.
 const base = process.env.LOCALAPPDATA
   ? path.join(process.env.LOCALAPPDATA, 'CodeStatus')
   : path.join(os.homedir(), 'AppData', 'Local', 'CodeStatus');
@@ -95,12 +98,19 @@ function makeEventID() {
   return `${process.pid}-${process.hrtime.bigint().toString()}-0`;
 }
 
-// Windows has no TERM_PROGRAM. The host is inferred from the variables the
-// terminals here do export.
+// Mirrors hostFromEnvironment in src/platform/host.js.
+//
+// Only what can be proven. Windows has no TERM_PROGRAM convention, and the
+// tempting fallback — reading PSModulePath and calling it PowerShell — is
+// wrong: that variable is machine-wide on Windows 10 and later, so it is set in
+// cmd, in VS Code, and in services alike. Everything this cannot prove is left
+// as unknown and resolved by the daemon, which walks the process tree.
 function detectHost() {
-  if (process.env.TERM_PROGRAM === 'vscode' || process.env.VSCODE_INJECTION) return 'vsCode';
-  if (process.env.WT_SESSION) return 'windowsTerminal';
-  if (process.env.PSModulePath) return 'powershell';
+  const env = process.env;
+  if (env.TERM_PROGRAM === 'vscode' || env.VSCODE_INJECTION || env.VSCODE_GIT_IPC_HANDLE) {
+    return 'vsCode';
+  }
+  if (env.WT_SESSION) return 'windowsTerminal';
   return 'unknown';
 }
 

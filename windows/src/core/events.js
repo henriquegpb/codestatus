@@ -89,7 +89,8 @@ function providerDisplayName(provider) {
 }
 
 // Windows has no TERM_PROGRAM as macOS does. The host is inferred from the
-// variables Windows terminals actually export.
+// variables Windows terminals export, and from the process tree when they
+// export nothing; see platform/host.js for the detection.
 const HostApplication = Object.freeze({
   windowsTerminal: 'windowsTerminal',
   vsCode: 'vsCode',

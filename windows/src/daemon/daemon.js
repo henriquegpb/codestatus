@@ -15,10 +15,12 @@ const { EventEmitter } = require('events');
 const { paths, createDirectories } = require('../platform/paths');
 const { pipeName } = require('../platform/transport');
 const { scan } = require('../platform/process-scan');
+const { hostFromProcessTree } = require('../platform/host');
 const { SessionRegistry } = require('../core/registry');
 const { decodeLine, processExitedEvent } = require('./decoder');
 const { LogicalClock } = require('../core/clock');
-const { AgentState } = require('../core/state');
+const { AgentState, isActive } = require('../core/state');
+const { HostApplication } = require('../core/events');
 
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const SPOOL_DRAIN_INTERVAL_MS = 2 * 1000;
@@ -203,7 +205,8 @@ class Daemon extends EventEmitter {
 
   // MARK: - Process discovery
 
-  // Finds agents that are running and have never reported.
+  // Finds agents that are running and have never reported, and fills in the
+  // terminal each session is hosted by.
   //
   // Guarded against overlap: the scan is slower than nothing, and two of them
   // racing would double the cost for no new information.
@@ -211,13 +214,27 @@ class Daemon extends EventEmitter {
     if (this.scanning || !this.scanEnabled) return;
     this.scanning = true;
     try {
-      const { agents, failed } = await scan();
+      const { agents, tree, failed } = await scan();
       this.lastScanFailed = failed;
       if (failed) return;
 
       let changed = false;
       for (const agent of agents) {
         if (this.registry.observeProcess(agent)) changed = true;
+      }
+
+      // Host enrichment. The hook can only prove VS Code and Windows Terminal
+      // from the environment; the process tree covers everything else, and the
+      // scan already has the tree in hand.
+      for (const session of this.registry.all) {
+        if (!session.pid || !isActive(session.state)) continue;
+        if (session.hostApplication !== HostApplication.unknown) continue;
+        const host = hostFromProcessTree(session.pid, tree);
+        if (host !== HostApplication.unknown) {
+          session.hostApplication = host;
+          session.controlTarget.hostApplication = host;
+          changed = true;
+        }
       }
 
       if (changed) {
