@@ -14,9 +14,51 @@
     "test:platform": "node test/platform.test.js",
     "test:transport": "node test/transport.test.js",
     "preview": "electron test/preview.js",
-    "icons": "electron test/render-icons.js"
+    "icons": "electron test/render-icons.js",
+    "dist": "electron-builder --win"
   },
   "devDependencies": {
-    "electron": "^43.4.1"
+    "electron": "^43.4.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.codestatus.windows",
+    "productName": "CodeStatus",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "hook",
+        "to": "hook"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "CodeStatus-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CodeStatus",
+      "deleteAppDataOnUninstall": false,
+      "include": "build/uninstall.nsh"
+    }
   }
 }

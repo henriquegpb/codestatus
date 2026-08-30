@@ -1,9 +1,13 @@
-# CodeStatus for Windows — installer.
+# CodeStatus for Windows — install from source.
 #
-# Prepares the folder on a new machine: checks the prerequisites, fetches the
-# dependencies, runs the tests on the target machine, and creates the shortcuts.
-# It does not touch your Claude Code settings.json — connecting the hooks stays
-# an explicit action, from the app.
+# Most people should not need this: scripts\package.ps1 aside, the normal way in
+# is the installer published with each release, which carries its own runtime
+# and needs nothing preinstalled. This script is for running from a checkout —
+# developing on the app, or trying a branch.
+#
+# It checks the prerequisites, fetches the dependencies, runs the tests on the
+# target machine, and creates the shortcuts. It does not touch your Claude Code
+# settings.json — connecting the hooks stays an explicit action, from the app.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
@@ -25,15 +29,18 @@ Write-Host "CodeStatus for Windows — install" -ForegroundColor White
 Write-Host "folder: $root"
 
 # --- 1. prerequisites --------------------------------------------------------
-# Node is a hard requirement, and not only to build: every hook firing is a
-# `node hook.js`. Without it the app starts and stays permanently empty.
+# Node is needed to fetch dependencies and to run the tests. It is no longer
+# needed for the hook: that runs on the Electron binary npm is about to install,
+# which is a Node runtime whenever ELECTRON_RUN_AS_NODE is set. See
+# src/platform/runtime.js.
 
 Step "Checking Node.js"
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
     Fail "Node.js was not found on PATH."
     Write-Host "    Install the LTS build from https://nodejs.org and run this again."
-    Write-Host "    It is needed both to assemble the app and for the hooks to run at all."
+    Write-Host "    It is needed to fetch dependencies and run the tests."
+    Write-Host "    To avoid this entirely, use the installer from the releases page."
     exit 1
 }
 $version = (& node --version).Trim()

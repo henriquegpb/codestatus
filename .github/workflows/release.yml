@@ -13,6 +13,73 @@ permissions:
   contents: write
 
 jobs:
+  # Two independent jobs publishing into one release. The Windows installer does
+  # not need a Mac and the disk image does not need a Windows runner, and making
+  # either wait for the other would double the time to a release for no reason.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          [[ -z "$VERSION" ]] && VERSION="${GITHUB_REF_NAME#v}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The whole suite, including the transport integration test, which starts
+      # a real daemon on a real named pipe. Nothing ships that has not had the
+      # privacy assertion run against the bytes on the wire.
+      - name: Test
+        run: npm test
+
+      # The version in package.json is what electron-builder stamps into the
+      # installer and the executable, so it has to match the tag rather than
+      # whatever was last committed.
+      - name: Stamp the version
+        shell: bash
+        run: npm version "${{ steps.version.outputs.value }}" --no-git-tag-version --allow-same-version
+
+      # Unsigned, for now. A Windows installer without an Authenticode
+      # certificate gets a SmartScreen warning on first run, and the site says
+      # so rather than letting people meet it unwarned. Add CSC_LINK and
+      # CSC_KEY_PASSWORD here when there is a certificate to add.
+      - name: Build the installer
+        run: npm run dist
+
+      # A stable name for the website to link, alongside the versioned one that
+      # is the historical record. `/releases/latest/download/<name>` needs a
+      # filename that does not change with the version.
+      - name: Duplicate under stable names
+        shell: bash
+        run: |
+          cd dist
+          cp "CodeStatus-Setup-${{ steps.version.outputs.value }}-x64.exe" CodeStatus-Setup.exe
+          cp "CodeStatus-Setup-${{ steps.version.outputs.value }}-arm64.exe" CodeStatus-Setup-arm64.exe
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            windows/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-x64.exe
+            windows/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-arm64.exe
+            windows/dist/CodeStatus-Setup.exe
+            windows/dist/CodeStatus-Setup-arm64.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
   release:
     # Pinned to the toolchain the project is developed against. macos-15 images
     # ship a much older Xcode, and building on a different compiler than we ship
