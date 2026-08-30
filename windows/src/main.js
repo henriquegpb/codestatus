@@ -28,6 +28,7 @@ let latest = {
   },
   sessions: [],
   unreportedCount: 0,
+  diagnosis: { notConnected: {}, predatesHooks: 0, unexplained: 0 },
 };
 
 // One instance only: two daemons would fight over the same named pipe, and the
@@ -102,7 +103,7 @@ function pushToHUD() {
 function refreshTray() {
   if (!tray) return;
   tray.setImage(buildIcon(latest.counts));
-  tray.setToolTip(buildTooltip(latest.counts, latest.unreportedCount));
+  tray.setToolTip(buildTooltip(latest.counts, latest.unreportedCount, latest.diagnosis));
 }
 
 function buildMenu() {
