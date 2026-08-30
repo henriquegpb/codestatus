@@ -9,15 +9,27 @@ const fs = require('fs');
 const { paths } = require('../platform/paths');
 
 const DEFAULTS = Object.freeze({
-  // Notify when a turn finishes. The macOS app does not do this — it interrupts
-  // only when there is something to do. On by default here because it was asked
-  // for, but it stays a choice rather than an imposition.
-  notifyOnCompletion: true,
   // Notify when a session starts needing you: approval, a reply, or a failure.
   // This is the app's reason to exist; turning it off leaves only the icon.
   notifyWhenNeeded: true,
+
+  // Notify when a turn finishes.
+  //
+  // Off by default because the macOS app does not do this at all — it
+  // interrupts only when there is something to do, and "your agent finished"
+  // is not something to do. Kept as an option because the distinction it
+  // depends on is already implemented correctly and costs nothing to offer:
+  // see isTurnCompletion, which looks at where a transition came *from*, so
+  // opening a session never announces that something finished.
+  notifyOnCompletion: false,
+
   // Play the system sound with the notification.
   soundEnabled: true,
+
+  // Scan for running agents that are not reporting. The scan shells out to
+  // PowerShell, so it is the one periodic cost in the app worth being able to
+  // switch off on a slow machine.
+  scanForUnreported: true,
 });
 
 let cache = null;

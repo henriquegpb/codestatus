@@ -1,0 +1,204 @@
+/*
+ * The settings window.
+ *
+ * Fluent's settings layout: a titlebar the window can be dragged by, section
+ * headings, and one card per setting with the control on the right. This is
+ * what Windows' own Settings app looks like, and it is deliberately not the
+ * macOS Form/Section layout — the same information, arranged the way a Windows
+ * user expects to find it.
+ */
+
+.window {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-opaque);
+}
+
+html[data-acrylic="1"] .window {
+  background: var(--surface-veil);
+}
+
+/* --------------------------------------------------------------- titlebar */
+
+/* The window is frameless so the caption matches the app rather than the OS
+   default, which means the drag region has to be declared by hand. */
+.titlebar {
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding-left: 16px;
+  flex: none;
+}
+
+.titlebar .title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+/* 46x40 is the Windows caption button hit target; anything smaller feels wrong
+   to a hand that has used the platform. */
+.titlebar-close {
+  -webkit-app-region: no-drag;
+  width: 46px;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.titlebar-close:hover { background: #C42B1C; color: #fff; }
+.titlebar-close:active { background: #B22B1C; }
+.titlebar-close .glyph { font-size: 10px; }
+
+/* ------------------------------------------------------------------ layout */
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 20px 20px;
+}
+
+.scroll::-webkit-scrollbar { width: 12px; }
+.scroll::-webkit-scrollbar-thumb {
+  background-color: var(--text-disabled);
+  border-radius: 6px;
+  border: 4px solid transparent;
+  background-clip: content-box;
+}
+
+h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  min-height: 56px;
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-control);
+  border-radius: var(--radius-flyout);
+}
+
+.card-text { flex: 1; min-width: 0; }
+
+.card .label { font-size: 14px; }
+
+.card .detail {
+  font-size: 12px;
+  font-family: var(--font-ui-small);
+  line-height: 16px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.card .detail.mono {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  word-break: break-all;
+}
+
+/* Fluent's bordered button, for the actions that are not toggles. */
+.subtle-button.bordered {
+  flex: none;
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-control);
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 5px 16px;
+  min-width: 92px;
+  justify-content: center;
+}
+
+.subtle-button.bordered:hover { background: var(--fill-control-hover); }
+
+.subtle-button.bordered.danger { color: var(--danger); }
+
+/* ------------------------------------------------------------------ toggle */
+
+.toggle {
+  flex: none;
+  position: relative;
+  display: inline-block;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+/* 40x20 with a 12px knob: the published ToggleSwitch metrics. */
+.toggle .track {
+  display: block;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--text-secondary);
+  background: transparent;
+  transition: background-color 120ms cubic-bezier(0.2, 0, 0, 1),
+              border-color 120ms linear;
+}
+
+.toggle .knob {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  margin: 3px;
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1),
+              background-color 120ms linear;
+}
+
+.toggle input:checked + .track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle input:checked + .track .knob {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+html[data-theme="light"] .toggle input:checked + .track .knob { background: #fff; }
+
+.toggle input:focus-visible + .track {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.toggle:hover .track { background: var(--fill-subtle-hover); }
+.toggle:hover input:checked + .track { background: var(--accent); filter: brightness(1.08); }
+
+/* ------------------------------------------------------------------- about */
+
+.about {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--stroke-divider);
+  font-size: 12px;
+  font-family: var(--font-ui-small);
+  line-height: 18px;
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle .track, .toggle .knob { transition: none; }
+}

@@ -36,6 +36,7 @@ const SUPPORTS_MATERIAL = process.platform === 'win32'
 
 let tray = null;
 let hud = null;
+let settingsWindow = null;
 let daemon = null;
 let latest = {
   counts: {
@@ -74,7 +75,9 @@ function currentTheme() {
 
 function pushTheme() {
   const theme = currentTheme();
-  if (hud && !hud.isDestroyed()) hud.webContents.send('theme', theme);
+  for (const win of [hud, settingsWindow]) {
+    if (win && !win.isDestroyed()) win.webContents.send('theme', theme);
+  }
 }
 
 nativeTheme.on('updated', () => {
@@ -200,6 +203,51 @@ function pushToHUD() {
   });
 }
 
+// MARK: - Settings
+
+function showSettings() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 560,
+    height: 720,
+    frame: false,
+    resizable: true,
+    minWidth: 460,
+    minHeight: 420,
+    show: false,
+    ...materialOptions(),
+    webPreferences: {
+      preload: path.join(__dirname, 'ui', 'settings-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
+  settingsWindow.once('ready-to-show', () => {
+    pushTheme();
+    pushSettings();
+    settingsWindow.show();
+  });
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+}
+
+function pushSettings() {
+  if (!settingsWindow || settingsWindow.isDestroyed()) return;
+  settingsWindow.webContents.send('settings:state', {
+    prefs: prefs.all(),
+    openAtLogin: app.getLoginItemSettings().openAtLogin,
+    hooks: installer.status(),
+    version: app.getVersion(),
+  });
+}
+
 // MARK: - Tray
 
 function refreshTray() {
@@ -217,36 +265,8 @@ function buildMenu() {
       label: installed ? 'Disconnect Claude Code' : 'Connect Claude Code',
       click: () => (installed ? doUninstall() : doInstall()),
     },
-    {
-      label: 'Start with Windows',
-      type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
-    },
+    { label: 'Settings…', click: () => showSettings() },
     { type: 'separator' },
-    {
-      label: 'Tell me when a turn finishes',
-      type: 'checkbox',
-      checked: prefs.get('notifyOnCompletion'),
-      click: (item) => prefs.set('notifyOnCompletion', item.checked),
-    },
-    {
-      label: 'Tell me when a session needs me',
-      type: 'checkbox',
-      checked: prefs.get('notifyWhenNeeded'),
-      click: (item) => prefs.set('notifyWhenNeeded', item.checked),
-    },
-    {
-      label: 'Play a sound',
-      type: 'checkbox',
-      checked: prefs.get('soundEnabled'),
-      click: (item) => prefs.set('soundEnabled', item.checked),
-    },
-    { type: 'separator' },
-    {
-      label: 'Open settings.json',
-      click: () => shell.openPath(installer.status().settingsPath),
-    },
     { label: 'Quit CodeStatus', click: () => app.quit() },
   ]);
 }
@@ -262,6 +282,7 @@ function doInstall() {
     const receipt = installer.install();
     refreshMenu();
     pushToHUD();
+    pushSettings();
     dialog.showMessageBox({
       type: 'info',
       title: 'CodeStatus',
@@ -282,6 +303,7 @@ function doUninstall() {
     installer.uninstall();
     refreshMenu();
     pushToHUD();
+    pushSettings();
     dialog.showMessageBox({
       type: 'info',
       title: 'CodeStatus',
@@ -354,6 +376,9 @@ function openSession(session) {
 
 app.whenReady().then(() => {
   daemon = new Daemon();
+  // Set rather than toggled: setScanEnabled kicks off a scan, and start() is
+  // about to run one anyway once the runtime directories exist.
+  daemon.scanEnabled = Boolean(prefs.get('scanForUnreported'));
 
   daemon.on('effects', (effects, snapshot) => {
     latest = snapshot;
@@ -398,11 +423,11 @@ ipcMain.on('session:dismiss', (_e, id) => {
 });
 
 ipcMain.on('app:refresh', () => { if (daemon) daemon.refresh(); });
+ipcMain.on('app:settings', () => { if (hud) hud.hide(); showSettings(); });
 ipcMain.on('app:quit', () => app.quit());
 
 ipcMain.on('hooks:install', () => doInstall());
 ipcMain.on('hooks:uninstall', () => doUninstall());
-ipcMain.on('app:settings', () => { if (tray) tray.popUpContextMenu(); });
 ipcMain.on('hooks:openFile', () => shell.openPath(installer.status().settingsPath));
 
 // The popover hugs its content: the renderer measures, the main process resizes
@@ -415,6 +440,21 @@ ipcMain.on('hud:height', (_e, height) => {
 });
 
 ipcMain.on('hud:close', () => { if (hud) hud.hide(); });
+
+ipcMain.on('settings:pref', (_e, { key, value }) => {
+  prefs.set(key, value);
+  if (key === 'scanForUnreported' && daemon) daemon.setScanEnabled(value);
+  pushSettings();
+});
+
+ipcMain.on('settings:openAtLogin', (_e, value) => {
+  app.setLoginItemSettings({ openAtLogin: Boolean(value) });
+  pushSettings();
+});
+
+ipcMain.on('settings:close', () => {
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
+});
 
 // A tray app has no windows most of the time; closing the last one must not
 // quit it.

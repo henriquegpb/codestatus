@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+<title>CodeStatus Settings</title>
+<link rel="stylesheet" href="fluent.css" />
+<link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <div class="window">
+    <div class="titlebar">
+      <span class="title">Settings</span>
+      <button class="titlebar-close" id="close" title="Close" aria-label="Close">
+        <span class="glyph" aria-hidden="true">&#xE711;</span>
+      </button>
+    </div>
+
+    <div class="scroll">
+      <h2>Alerts</h2>
+      <div class="group">
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Tell me when a session needs me</div>
+            <div class="detail">Approval, a reply, or a failed turn.</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="notifyWhenNeeded" />
+            <span class="track"><span class="knob"></span></span>
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Tell me when a turn finishes</div>
+            <div class="detail">
+              Off by default. The macOS app interrupts only when there is
+              something to do — finishing is not something to do.
+            </div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="notifyOnCompletion" />
+            <span class="track"><span class="knob"></span></span>
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Play a sound</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="soundEnabled" />
+            <span class="track"><span class="knob"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <h2>General</h2>
+      <div class="group">
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Start with Windows</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="openAtLogin" />
+            <span class="track"><span class="knob"></span></span>
+          </label>
+        </div>
+
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Look for agents that aren’t reporting</div>
+            <div class="detail">
+              Scans the process list every 20 seconds so the app can tell an idle
+              machine from an agent it cannot see. Costs a few hundred
+              milliseconds each time.
+            </div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="scanForUnreported" />
+            <span class="track"><span class="knob"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <h2>Claude Code</h2>
+      <div class="group">
+        <div class="card">
+          <div class="card-text">
+            <div class="label" id="hookStatus">Checking…</div>
+            <div class="detail" id="hookDetail"></div>
+          </div>
+          <button class="subtle-button bordered" id="connectToggle">Connect</button>
+        </div>
+
+        <div class="card">
+          <div class="card-text">
+            <div class="label">Open settings.json</div>
+            <div class="detail" id="settingsPath"></div>
+          </div>
+          <button class="subtle-button bordered" id="openFile">Open</button>
+        </div>
+      </div>
+
+      <div class="about" id="about"></div>
+    </div>
+  </div>
+  <script src="settings.js"></script>
+</body>
+</html>
