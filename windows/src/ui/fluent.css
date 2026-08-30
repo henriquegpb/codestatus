@@ -1,0 +1,189 @@
+/*
+ * Windows 11 Fluent design tokens.
+ *
+ * Shared by the popover and the settings window so the two read as one app.
+ * The values are the published Fluent 2 alpha ramps rather than approximations:
+ * Windows composes them over a live acrylic backdrop, and eyeballed greys go
+ * visibly wrong the moment the wallpaper behind the flyout changes.
+ *
+ * Deliberately not a translation of the macOS look. The mac app is a popover
+ * with vibrancy, SF Pro, and 13/11pt text; matching that pixel for pixel on
+ * Windows produces something that looks foreign on both. What carries across is
+ * the information design — what is shown, in what order, with what emphasis —
+ * and the state palette, so a green dot means the same thing on either machine.
+ */
+
+:root {
+  /* The state palette, matching Sources/CodeStatusApp/UI/HUDModel.swift.
+     These are the mac tints exactly: unlike the tray icon, nothing is drawn on
+     top of them here, so there is no contrast reason to shift the hue. */
+  --state-free: #30D158;
+  --state-busy: #FF9F0A;
+  --state-needs: #FF6B61;
+  --state-failed: #FF453A;
+
+  /* Overridden from the main process with the user's Windows accent colour. */
+  --accent: #4CC2FF;
+
+  --radius-flyout: 8px;
+  --radius-control: 4px;
+
+  /* Segoe UI Variable is the Windows 11 system face; Segoe UI is the Windows 10
+     fallback. Both are present on their respective versions, so no webfont is
+     loaded and the popover matches the shell's own text. */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-ui-small: "Segoe UI Variable Small", "Segoe UI", system-ui, sans-serif;
+  /* Segoe Fluent Icons ships with Windows 11, Segoe MDL2 Assets with Windows
+     10. The glyph points used here exist in both. */
+  --font-icons: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+}
+
+html[data-theme="dark"] {
+  --text-primary: rgba(255, 255, 255, 1);
+  --text-secondary: rgba(255, 255, 255, 0.786);
+  --text-tertiary: rgba(255, 255, 255, 0.5442);
+  --text-disabled: rgba(255, 255, 255, 0.3628);
+
+  --fill-subtle-hover: rgba(255, 255, 255, 0.0605);
+  --fill-subtle-press: rgba(255, 255, 255, 0.0419);
+  --fill-control: rgba(255, 255, 255, 0.0605);
+  --fill-control-hover: rgba(255, 255, 255, 0.0837);
+
+  --stroke-divider: rgba(255, 255, 255, 0.0837);
+  --stroke-control: rgba(255, 255, 255, 0.0698);
+  --stroke-surface: rgba(0, 0, 0, 0.3);
+
+  /* Used only when acrylic is unavailable; see the note in main.js. */
+  --surface-opaque: #2B2B2B;
+  --surface-veil: rgba(255, 255, 255, 0.02);
+
+  --danger: #FF99A4;
+  --caution-fill: rgba(255, 159, 10, 0.13);
+}
+
+html[data-theme="light"] {
+  --text-primary: rgba(0, 0, 0, 0.8956);
+  --text-secondary: rgba(0, 0, 0, 0.6063);
+  --text-tertiary: rgba(0, 0, 0, 0.4458);
+  --text-disabled: rgba(0, 0, 0, 0.3614);
+
+  --fill-subtle-hover: rgba(0, 0, 0, 0.0373);
+  --fill-subtle-press: rgba(0, 0, 0, 0.0241);
+  --fill-control: rgba(255, 255, 255, 0.7);
+  --fill-control-hover: rgba(249, 249, 249, 0.5);
+
+  --stroke-divider: rgba(0, 0, 0, 0.0803);
+  --stroke-control: rgba(0, 0, 0, 0.0578);
+  --stroke-surface: rgba(0, 0, 0, 0.12);
+
+  --surface-opaque: #F3F3F3;
+  --surface-veil: rgba(255, 255, 255, 0.35);
+
+  --danger: #C42B1C;
+  --caution-fill: rgba(157, 93, 0, 0.09);
+
+  /* The published accent is tuned for dark backgrounds; on light it needs the
+     darker shade or interactive text fails contrast against the acrylic. */
+  --accent: #005FB8;
+
+  /* The state tints above are macOS's *dark* values, which is what the mac app
+     shows because its popover is dark whatever the system is. On a light
+     surface the same greens and ambers wash out to pastel and the dot stops
+     reading as a signal, so each drops a step. Same hue, same meaning. */
+  --state-free: #10893E;
+  --state-busy: #C26A00;
+  --state-needs: #D64430;
+  --state-failed: #C42B1C;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-primary);
+  /* Transparent so the DWM material shows through. The opaque fallback is
+     applied to the surface below, not here, because a solid body would hide
+     acrylic entirely on the machines that support it. */
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* No material available (Windows 10, or a machine with transparency effects
+   switched off): paint a solid surface instead of leaving a black rectangle. */
+html[data-acrylic="0"] .surface {
+  background: var(--surface-opaque);
+}
+
+html[data-acrylic="1"] .surface {
+  background: var(--surface-veil);
+}
+
+.glyph {
+  font-family: var(--font-icons);
+  font-size: 14px;
+  line-height: 1;
+  /* Icon fonts have their own metrics; without this the label beside a glyph
+     sits a pixel or two low. */
+  display: inline-block;
+  transform: translateY(1px);
+}
+
+/* Fluent's subtle button: no chrome until you touch it. */
+.subtle-button {
+  font: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+  transition: background-color 90ms linear, color 90ms linear;
+}
+
+.subtle-button:hover {
+  background: var(--fill-subtle-hover);
+  color: var(--text-primary);
+}
+
+.subtle-button:active {
+  background: var(--fill-subtle-press);
+  color: var(--text-secondary);
+}
+
+.subtle-button:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 1px;
+}
+
+/* Fluent's accent button, for the one action a first-run user must take. */
+.accent-button {
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 6px 14px;
+  cursor: default;
+}
+
+.accent-button:hover { filter: brightness(1.08); }
+.accent-button:active { filter: brightness(0.92); }
+
+html[data-theme="light"] .accent-button { color: #fff; }

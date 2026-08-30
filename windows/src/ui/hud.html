@@ -1,175 +1,38 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
 <title>CodeStatus</title>
-<style>
-  :root {
-    --bg: #16181d;
-    --panel: #1e2128;
-    --line: #2b2f38;
-    --text: #e8eaed;
-    --muted: #9aa0aa;
-    --busy: #387ae8;
-    --free: #2ea043;
-    --needs: #f59e0b;
-    --failed: #e5534b;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: "Segoe UI", system-ui, sans-serif;
-    font-size: 13px;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    user-select: none;
-  }
-  header {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    -webkit-app-region: drag;
-  }
-  h1 { font-size: 13px; font-weight: 600; letter-spacing: .2px; }
-  .close {
-    -webkit-app-region: no-drag;
-    cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1;
-    padding: 2px 6px; border-radius: 5px;
-  }
-  .close:hover { background: var(--panel); color: var(--text); }
-
-  .counts { display: flex; gap: 8px; padding: 10px 14px; }
-  .chip {
-    flex: 1; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px; text-align: center;
-  }
-  .chip b { display: block; font-size: 18px; font-weight: 600; line-height: 1.2; }
-  .chip span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-  .chip.needs b { color: var(--needs); }
-  .chip.busy b { color: var(--busy); }
-  .chip.free b { color: var(--free); }
-
-  ul { list-style: none; overflow-y: auto; flex: 1; padding: 0 8px 8px; }
-  li {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 10px; border-radius: 8px; cursor: pointer;
-  }
-  li:hover { background: var(--panel); }
-  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-  .dot.busy { background: var(--busy); }
-  .dot.free { background: var(--free); }
-  .dot.waitingForApproval, .dot.waitingForInput { background: var(--needs); }
-  .dot.failed { background: var(--failed); }
-  .dot.reconnecting, .dot.unknown, .dot.discovering { background: var(--muted); }
-  .info { min-width: 0; flex: 1; }
-  .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .age { font-size: 11px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
-
-  .empty { padding: 26px 18px; text-align: center; color: var(--muted); line-height: 1.6; }
-  .empty button {
-    margin-top: 12px; background: var(--busy); color: #fff; border: 0;
-    padding: 7px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
-    font-family: inherit;
-  }
-  footer {
-    padding: 8px 14px; border-top: 1px solid var(--line);
-    font-size: 11px; color: var(--muted);
-  }
-</style>
+<link rel="stylesheet" href="fluent.css" />
+<link rel="stylesheet" href="hud.css" />
 </head>
 <body>
-  <header>
-    <h1>CodeStatus</h1>
-    <div class="close" id="close">&times;</div>
-  </header>
+  <div class="surface" id="surface">
+    <!-- What the macOS menu bar shows outright. The Windows tray fits one
+         number, so the full breakdown has to live at the top of the popover. -->
+    <header class="summary" id="summary"></header>
 
-  <div class="counts">
-    <div class="chip needs"><b id="c-needs">0</b><span>needs you</span></div>
-    <div class="chip busy"><b id="c-busy">0</b><span>busy</span></div>
-    <div class="chip free"><b id="c-free">0</b><span>free</span></div>
+    <!-- The inner wrapper is what gets measured. Measuring the scroller itself
+         cannot work: once the window is taller than the content, its
+         scrollHeight is its own height, so the popover could grow but never
+         shrink again. -->
+    <div class="body" id="body"><div class="body-inner" id="bodyInner"></div></div>
+
+    <footer class="footer">
+      <button class="footer-button" id="refresh" title="Re-scan for agent sessions">
+        <span class="glyph" aria-hidden="true">&#xE72C;</span><span>Refresh</span>
+      </button>
+      <button class="footer-button" id="settings">
+        <span class="glyph" aria-hidden="true">&#xE713;</span><span>Settings</span>
+      </button>
+      <span class="spacer"></span>
+      <button class="footer-button" id="quit">
+        <span class="glyph" aria-hidden="true">&#xE7E8;</span><span>Quit</span>
+      </button>
+    </footer>
   </div>
-
-  <ul id="list"></ul>
-  <footer id="footer"></footer>
-
-<script>
-  const list = document.getElementById('list');
-  const footer = document.getElementById('footer');
-  document.getElementById('close').onclick = () => window.codestatus.close();
-
-  function age(since) {
-    const s = Math.max(0, Math.round((Date.now() - since) / 1000));
-    if (s < 60) return s + 's';
-    if (s < 3600) return Math.floor(s / 60) + 'm';
-    return Math.floor(s / 3600) + 'h';
-  }
-
-  function render(data) {
-    document.getElementById('c-needs').textContent = data.counts.needsYou;
-    document.getElementById('c-busy').textContent = data.counts.busy;
-    document.getElementById('c-free').textContent = data.counts.free;
-
-    list.textContent = '';
-
-    if (!data.installed) {
-      const div = document.createElement('div');
-      div.className = 'empty';
-      div.textContent = 'The Claude Code hooks are not installed yet, so nothing can be observed.';
-      const btn = document.createElement('button');
-      btn.textContent = 'Connect Claude Code';
-      btn.onclick = () => window.codestatus.connect();
-      div.appendChild(btn);
-      list.appendChild(div);
-    } else if (data.sessions.length === 0) {
-      const div = document.createElement('div');
-      div.className = 'empty';
-      div.textContent = 'No active sessions. Open Claude Code in a terminal and it will appear here.';
-      list.appendChild(div);
-    } else {
-      for (const s of data.sessions) {
-        const li = document.createElement('li');
-        li.onclick = () => window.codestatus.focusSession(s.id);
-
-        const dot = document.createElement('div');
-        dot.className = 'dot ' + s.state;
-
-        const info = document.createElement('div');
-        info.className = 'info';
-        const name = document.createElement('div');
-        name.className = 'name';
-        name.textContent = s.name;
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-        meta.textContent = s.label + (s.model ? ' · ' + s.model : '');
-        info.appendChild(name);
-        info.appendChild(meta);
-
-        const t = document.createElement('div');
-        t.className = 'age';
-        t.textContent = age(s.since);
-
-        li.appendChild(dot);
-        li.appendChild(info);
-        li.appendChild(t);
-        list.appendChild(li);
-      }
-    }
-
-    footer.textContent = data.unreportedCount > 0
-      ? data.unreportedCount + ' session(s) running without hooks — open a new one to see it'
-      : 'Click a session to bring its window back';
-  }
-
-  window.codestatus.onState(render);
-</script>
+  <script src="hud.js"></script>
 </body>
 </html>

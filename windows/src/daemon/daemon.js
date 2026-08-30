@@ -252,6 +252,18 @@ class Daemon extends EventEmitter {
     }
   }
 
+  // Re-runs everything that discovers state, for the Refresh button.
+  //
+  // The macOS Refresh re-scans processes; this does the same, plus a spool
+  // drain, because on Windows the spool is the path a hook takes whenever the
+  // app was not listening — including the seconds right after launch.
+  async refresh() {
+    this.drainSpool();
+    this.checkLiveness();
+    await this.scanForAgents();
+    this.emit('effects', [{ type: 'refreshed' }], this.snapshot());
+  }
+
   forget(sessionID) {
     if (!this.registry.forget(sessionID)) return false;
     this.emit('effects', [{ type: 'sessionRemoved', sessionID }], this.snapshot());

@@ -1,13 +1,15 @@
 'use strict';
 
-// The main process: hosts the daemon, draws the tray and the HUD, and raises
-// the notifications. Equivalent to AppDelegate + MenuBarController +
-// NotificationCoordinator + SessionDaemon in the original.
+// The main process: hosts the daemon, draws the tray and the popover, and
+// raises the notifications. Equivalent to AppDelegate + MenuBarController +
+// NotificationCoordinator + SessionDaemon in the macOS app.
 
 const {
   app, Tray, Menu, BrowserWindow, Notification, ipcMain, shell, screen, dialog,
+  nativeTheme, systemPreferences,
 } = require('electron');
 const path = require('path');
+const os = require('os');
 
 const { Daemon } = require('./daemon/daemon');
 const { buildIcon, buildTooltip } = require('./ui/tray-icon');
@@ -15,9 +17,22 @@ const { displayName } = require('./core/session');
 const {
   AgentState, LABELS, needsAttention, isTurnCompletion,
 } = require('./core/state');
+const { hostDisplayName } = require('./core/events');
 const installer = require('./install/claude');
 const prefs = require('./core/prefs');
 const { focusProcessWindow } = require('./platform/focus');
+
+const HUD_WIDTH = 380;
+const HUD_MIN_HEIGHT = 120;
+const HUD_MAX_HEIGHT = 640;
+// Gap between the popover and the taskbar, matching the inset Windows flyouts use.
+const HUD_MARGIN = 12;
+
+// Mica and acrylic are DWM materials introduced in Windows 11 (build 22000).
+// Asking for one on Windows 10 leaves the window painted with backgroundColor,
+// which is why the fallback is a real colour rather than transparent.
+const SUPPORTS_MATERIAL = process.platform === 'win32'
+  && Number(os.release().split('.')[2] || 0) >= 22000;
 
 let tray = null;
 let hud = null;
@@ -29,6 +44,7 @@ let latest = {
   sessions: [],
   unreportedCount: 0,
   diagnosis: { notConnected: {}, predatesHooks: 0, unexplained: 0 },
+  scanFailed: false,
 };
 
 // One instance only: two daemons would fight over the same named pipe, and the
@@ -39,43 +55,137 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => showHUD());
 }
 
-// MARK: - HUD
+// MARK: - Theme
+
+function currentTheme() {
+  let accent = null;
+  try {
+    // Windows returns RRGGBBAA without a leading hash.
+    const raw = systemPreferences.getAccentColor();
+    if (raw) accent = `#${raw.slice(0, 6)}`;
+  } catch { /* no accent available; the stylesheet default stands */ }
+
+  return {
+    theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light',
+    accent,
+    acrylic: SUPPORTS_MATERIAL,
+  };
+}
+
+function pushTheme() {
+  const theme = currentTheme();
+  if (hud && !hud.isDestroyed()) hud.webContents.send('theme', theme);
+}
+
+nativeTheme.on('updated', () => {
+  pushTheme();
+  refreshTray();
+});
+
+// Shared by both windows. Transparency is deliberately not used: a transparent
+// frameless window on Windows loses its shadow and picks up corner artefacts,
+// and the DWM material gives the same effect without either.
+function materialOptions(opaqueDark = '#2B2B2B', opaqueLight = '#F3F3F3') {
+  if (SUPPORTS_MATERIAL) {
+    return { backgroundMaterial: 'acrylic', backgroundColor: '#00000000' };
+  }
+  return { backgroundColor: nativeTheme.shouldUseDarkColors ? opaqueDark : opaqueLight };
+}
+
+// MARK: - Popover
 
 function createHUD() {
   hud = new BrowserWindow({
-    width: 380,
-    height: 460,
+    width: HUD_WIDTH,
+    height: HUD_MIN_HEIGHT,
     show: false,
     frame: false,
     resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    transparent: true,
+    ...materialOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'ui', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
+
   hud.loadFile(path.join(__dirname, 'ui', 'hud.html'));
-  // Click outside dismisses it, the way a popover does.
-  hud.on('blur', () => hud.hide());
+  hud.once('ready-to-show', () => {
+    pushTheme();
+    pushToHUD();
+  });
+
+  // Click outside dismisses it, the way a flyout does.
+  hud.on('blur', () => { if (hud && !hud.webContents.isDevToolsOpened()) hud.hide(); });
+}
+
+// Anchors the popover to the tray icon.
+//
+// macOS gives a popover the status item to hang off. Windows does not, but it
+// does tell us where the icon was drawn — including inside the overflow flyout,
+// which is where a new icon lives until the user drags it out. Clamped to the
+// work area so it can never open off-screen on a secondary display, and the
+// side is chosen from where the taskbar actually is rather than assumed to be
+// the bottom.
+function positionHUD(height) {
+  const bounds = tray ? tray.getBounds() : null;
+  const anchor = bounds && bounds.width > 0
+    ? bounds
+    : { x: screen.getPrimaryDisplay().workArea.width, y: 0, width: 0, height: 0 };
+
+  const display = screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y });
+  const area = display.workArea;
+
+  const x = Math.round(Math.min(
+    Math.max(anchor.x + anchor.width / 2 - HUD_WIDTH / 2, area.x + HUD_MARGIN),
+    area.x + area.width - HUD_WIDTH - HUD_MARGIN,
+  ));
+
+  // Above the icon when the taskbar is at the bottom, below it when at the top.
+  const trayIsAtTop = anchor.y + anchor.height / 2 < area.y + area.height / 2;
+  const y = trayIsAtTop
+    ? Math.round(Math.max(anchor.y + anchor.height + HUD_MARGIN, area.y + HUD_MARGIN))
+    : Math.round(Math.min(
+      anchor.y - height - HUD_MARGIN,
+      area.y + area.height - height - HUD_MARGIN,
+    ));
+
+  hud.setBounds({
+    x, y, width: HUD_WIDTH, height,
+  });
 }
 
 function showHUD() {
   if (!hud) createHUD();
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const [w, h] = hud.getSize();
-  const area = display.workArea;
-  // Anchored where the tray normally lives, but clamped to the work area so it
-  // never opens off-screen on a secondary display.
-  const x = Math.min(Math.max(cursor.x - w / 2, area.x + 8), area.x + area.width - w - 8);
-  const y = Math.max(area.y + 8, area.y + area.height - h - 8);
-  hud.setPosition(Math.round(x), Math.round(y));
+  if (hud.isVisible()) {
+    hud.hide();
+    return;
+  }
+  pushToHUD();
+  positionHUD(hud.getBounds().height);
   hud.show();
   hud.focus();
-  pushToHUD();
+}
+
+function sessionForRenderer(session) {
+  return {
+    id: session.id,
+    name: displayName(session),
+    provider: session.provider,
+    state: session.state,
+    label: LABELS[session.state] || session.state,
+    cwd: session.cwd,
+    model: session.model,
+    pid: session.pid,
+    since: session.stateChangedAt,
+    host: hostDisplayName(session.hostApplication),
+  };
 }
 
 function pushToHUD() {
@@ -83,18 +193,10 @@ function pushToHUD() {
   hud.webContents.send('state', {
     counts: latest.counts,
     unreportedCount: latest.unreportedCount,
+    diagnosis: latest.diagnosis,
+    scanFailed: latest.scanFailed,
     installed: installer.isInstalled(),
-    sessions: latest.sessions.map((s) => ({
-      id: s.id,
-      name: displayName(s),
-      state: s.state,
-      label: LABELS[s.state] || s.state,
-      cwd: s.cwd,
-      model: s.model,
-      pid: s.pid,
-      since: s.stateChangedAt,
-      host: s.hostApplication,
-    })),
+    sessions: latest.sessions.map(sessionForRenderer),
   });
 }
 
@@ -109,7 +211,7 @@ function refreshTray() {
 function buildMenu() {
   const installed = installer.isInstalled();
   return Menu.buildFromTemplate([
-    { label: 'Open CodeStatus', click: showHUD },
+    { label: 'Open CodeStatus', click: () => showHUD() },
     { type: 'separator' },
     {
       label: installed ? 'Disconnect Claude Code' : 'Connect Claude Code',
@@ -145,7 +247,7 @@ function buildMenu() {
       label: 'Open settings.json',
       click: () => shell.openPath(installer.status().settingsPath),
     },
-    { label: 'Quit', click: () => app.quit() },
+    { label: 'Quit CodeStatus', click: () => app.quit() },
   ]);
 }
 
@@ -184,7 +286,8 @@ function doUninstall() {
       type: 'info',
       title: 'CodeStatus',
       message: 'Claude Code disconnected.',
-      detail: 'CodeStatus’s entries were removed from settings.json.',
+      detail: 'CodeStatus’s entries were removed from settings.json. Your own '
+        + 'hooks were left alone.',
     });
   } catch (err) {
     dialog.showErrorBox('CodeStatus', `Could not remove the hooks.\n\n${err.message}`);
@@ -192,6 +295,14 @@ function doUninstall() {
 }
 
 // MARK: - Notifications
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
 
 // One notification per transition. The registry's deduplicator already keeps a
 // repeated event from reaching here, so a turn can never announce twice.
@@ -214,8 +325,6 @@ function notifyTransition(transition, session) {
     }[transition.to] || 'Needs you.';
   } else if (isTurnCompletion(transition.from, transition.to)) {
     if (!prefs.get('notifyOnCompletion')) return;
-    // How long the turn took answers the question you ask when you come back to
-    // a session that has been working on its own.
     const seconds = Math.max(0, Math.round((transition.occurredAt - session.startedAt) / 1000));
     body = seconds > 0 ? `Finished. ${formatDuration(seconds)} in this session.` : 'Finished.';
   } else {
@@ -230,17 +339,13 @@ function notifyTransition(transition, session) {
   notification.show();
 }
 
-function formatDuration(seconds) {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  return `${Math.floor(seconds / 3600)}h${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}`;
-}
-
 // MARK: - Returning to a session
 
 function openSession(session) {
   if (!session) return;
   focusProcessWindow(session.pid, (found) => {
+    // No window in the tree: opening the folder is the consolation, and it still
+    // puts the user in the right place.
     if (!found && session.cwd) shell.openPath(session.cwd);
   });
 }
@@ -275,23 +380,43 @@ app.whenReady().then(() => {
   tray = new Tray(buildIcon(latest.counts));
   refreshTray();
   refreshMenu();
-  tray.on('click', showHUD);
+  tray.on('click', () => showHUD());
 
   createHUD();
-
-  // Time in each state is shown in the HUD, so it needs a tick of its own even
-  // when nothing happens.
-  setInterval(() => { if (hud && hud.isVisible()) pushToHUD(); }, 1000);
 });
 
-ipcMain.on('session:focus', (_event, id) => {
+// MARK: - IPC
+
+ipcMain.on('session:focus', (_e, id) => {
   const session = daemon && daemon.registry.get(id);
   if (session) openSession(session);
   if (hud) hud.hide();
 });
 
+ipcMain.on('session:dismiss', (_e, id) => {
+  if (daemon) daemon.forget(id);
+});
+
+ipcMain.on('app:refresh', () => { if (daemon) daemon.refresh(); });
+ipcMain.on('app:quit', () => app.quit());
+
 ipcMain.on('hooks:install', () => doInstall());
+ipcMain.on('hooks:uninstall', () => doUninstall());
+ipcMain.on('app:settings', () => { if (tray) tray.popUpContextMenu(); });
+ipcMain.on('hooks:openFile', () => shell.openPath(installer.status().settingsPath));
+
+// The popover hugs its content: the renderer measures, the main process resizes
+// and re-anchors, because the window grows upward from the taskbar.
+ipcMain.on('hud:height', (_e, height) => {
+  if (!hud || hud.isDestroyed()) return;
+  const clamped = Math.max(HUD_MIN_HEIGHT, Math.min(Math.round(height), HUD_MAX_HEIGHT));
+  if (hud.getBounds().height === clamped) return;
+  positionHUD(clamped);
+});
+
 ipcMain.on('hud:close', () => { if (hud) hud.hide(); });
 
+// A tray app has no windows most of the time; closing the last one must not
+// quit it.
 app.on('window-all-closed', (e) => e.preventDefault());
 app.on('before-quit', () => { if (daemon) daemon.stop(); });
