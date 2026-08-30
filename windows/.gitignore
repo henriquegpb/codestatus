@@ -1,0 +1,10 @@
+# O binario do Electron e especifico de plataforma e arquitetura, e sao ~370 MB.
+# Nunca viaja entre maquinas: no destino se roda `npm install` (ou instalar.ps1).
+node_modules/
+
+# Saida dos scripts de renderizacao, gerada sob demanda para conferir o visual.
+test/icons/
+
+# Ruido do Windows
+Thumbs.db
+desktop.ini
