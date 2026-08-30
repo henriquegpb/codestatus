@@ -78,23 +78,34 @@ class Daemon extends EventEmitter {
 
   listen() {
     const server = net.createServer((socket) => {
-      let buffer = '';
-      socket.setEncoding('utf8');
+      // Buffered as bytes, not as a decoded string: the size guard below is a
+      // byte budget, and a multi-byte character split across two chunks would
+      // otherwise be mangled before it reached JSON.parse.
+      let buffer = Buffer.alloc(0);
+
       socket.on('data', (chunk) => {
-        buffer += chunk;
+        buffer = Buffer.concat([buffer, chunk]);
         // An absurdly long line is junk or an attack; drop the connection.
         if (buffer.length > MAX_LINE_BYTES) {
-          buffer = '';
+          buffer = Buffer.alloc(0);
           socket.destroy();
           return;
         }
-        let index = buffer.indexOf('\n');
+        let index = buffer.indexOf(0x0a);
         while (index !== -1) {
-          const line = buffer.slice(0, index);
-          buffer = buffer.slice(index + 1);
+          const line = buffer.subarray(0, index).toString('utf8');
+          buffer = buffer.subarray(index + 1);
           if (line.trim()) this.ingest(line);
-          index = buffer.indexOf('\n');
+          index = buffer.indexOf(0x0a);
         }
+      });
+
+      // A hook that exits without a trailing newline still delivered a whole
+      // event; the close is the terminator.
+      socket.on('end', () => {
+        const line = buffer.toString('utf8').trim();
+        buffer = Buffer.alloc(0);
+        if (line) this.ingest(line);
       });
 
       socket.on('error', () => { /* the hook may vanish at any moment */ });
