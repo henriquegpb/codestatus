@@ -43,6 +43,16 @@ test('Installing registers every lifecycle event', () => {
   assert.strictEqual(installer.isInstalled(), true);
 });
 
+test('The registered set matches the macOS installer', () => {
+  // The two lists are maintained by hand in two languages, so the count is
+  // asserted rather than assumed: a new event added on one side and forgotten
+  // on the other is exactly how the state machines drift apart.
+  assert.strictEqual(CLAUDE_EVENTS.length, 14);
+  for (const required of ['PostToolUseFailure', 'PostToolBatch', 'Elicitation', 'ElicitationResult']) {
+    assert.ok(CLAUDE_EVENTS.includes(required), `${required} is not registered`);
+  }
+});
+
 test('Every entry is async, so it never sits on the agent’s critical path', () => {
   write({});
   installer.install();

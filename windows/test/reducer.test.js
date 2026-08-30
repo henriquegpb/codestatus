@@ -132,6 +132,42 @@ test('A late PostToolUse does not revive busy after Stop', () => {
   assert.strictEqual(s.state, AgentState.free);
 });
 
+// --- tool failure and batches ----------------------------------------------
+
+test('A failing tool closes its tool use', () => {
+  // PostToolUseFailure arrives *instead of* PostToolUse. Without it the session
+  // sits on whatever the permission check last said, for ever.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1' }),
+    ev(HookEventKind.postToolUseFailure, { turn: 't1' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.busy);
+});
+
+test('PostToolBatch closes a batch whose individual result went missing', () => {
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1' }),
+    ev(HookEventKind.postToolBatch, { turn: 't1' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.busy);
+});
+
+test('An MCP elicitation blocks the session and its result releases it', () => {
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.preToolUse, { turn: 't1', toolName: 'mcp__server__thing' }),
+    ev(HookEventKind.elicitation, { turn: 't1' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForInput);
+  apply(s, [ev(HookEventKind.elicitationResult, { turn: 't1' })]);
+  assert.strictEqual(s.state, AgentState.busy);
+});
+
 // --- notifications ----------------------------------------------------------
 
 test('Notification subtypes map to distinct states', () => {

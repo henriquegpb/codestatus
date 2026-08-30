@@ -24,20 +24,34 @@ const { execFileSync } = require('child_process');
 const { paths } = require('../platform/paths');
 
 // Every lifecycle hook Claude Code emits that changes what we can say about a
-// session's state.
+// session's state. Kept in step with ClaudeHookInstaller.events on macOS.
 //
 // `Notification` is included because its permission_prompt and idle_prompt
 // subtypes are the only signal for "the agent is waiting on you" that arrives
 // without a matching tool event. `StopFailure` is included because a turn that
 // ends in error must not be shown as free.
+//
+// 2.1.247 offers 31 events. The ones here earn their place by changing what we
+// can say about a session; the rest are deliberately left out, because every
+// registered event is a process spawned on the user's machine — and on Windows
+// that process is a Node cold start, so the list is even less free than it is
+// on macOS.
 const CLAUDE_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
+  // A failing tool emits this *instead of* PostToolUse.
+  'PostToolUseFailure',
+  // Closes a parallel batch even if one result went missing.
+  'PostToolBatch',
   'PermissionRequest',
   'PermissionDenied',
   'Notification',
+  // An MCP server asking the user something — the other way a session blocks on
+  // a human without the turn ending.
+  'Elicitation',
+  'ElicitationResult',
   'Stop',
   'StopFailure',
   'SessionEnd',

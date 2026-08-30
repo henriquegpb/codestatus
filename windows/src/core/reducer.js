@@ -36,7 +36,22 @@ function targetState(event) {
       return AgentState.busy;
 
     case HookEventKind.preToolUse:
+      return AgentState.busy;
+
     case HookEventKind.postToolUse:
+    case HookEventKind.postToolUseFailure:
+      // The answer arrived; whatever it was, the agent is moving again.
+      return AgentState.busy;
+
+    case HookEventKind.postToolBatch:
+      return AgentState.busy;
+
+    case HookEventKind.elicitation:
+      // An MCP server is asking, which blocks its tool call exactly the way a
+      // permission prompt blocks the turn.
+      return AgentState.waitingForInput;
+
+    case HookEventKind.elicitationResult:
       return AgentState.busy;
 
     case HookEventKind.permissionRequest:

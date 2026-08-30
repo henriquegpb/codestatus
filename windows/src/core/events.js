@@ -17,9 +17,21 @@ const HookEventKind = Object.freeze({
   userPromptSubmit: 'UserPromptSubmit',
   preToolUse: 'PreToolUse',
   postToolUse: 'PostToolUse',
+  // A tool that ended in an error. Its *replacement* for PostToolUse, not a
+  // companion to it — a failing tool emits this and nothing else, so without it
+  // a failed tool use never closes and the session sits on whatever the
+  // permission check last said.
+  postToolUseFailure: 'PostToolUseFailure',
+  // Every tool in a parallel batch has settled. Mostly redundant, and worth
+  // having anyway: it still closes a batch when an individual result was lost.
+  postToolBatch: 'PostToolBatch',
   permissionRequest: 'PermissionRequest',
   permissionDenied: 'PermissionDenied',
   notification: 'Notification',
+  // An MCP server is asking the user something and the tool call is blocked
+  // until they answer.
+  elicitation: 'Elicitation',
+  elicitationResult: 'ElicitationResult',
   stop: 'Stop',
   stopFailure: 'StopFailure',
   subagentStop: 'SubagentStop',
@@ -100,6 +112,10 @@ function rankOf(event) {
     case HookEventKind.preToolUse: return 2;
     case HookEventKind.permissionRequest:
     case HookEventKind.permissionDenied: return 3;
+    // An MCP server's question arrives *after* its tool's permission check and
+    // carries neither tool_name nor tool_use_id, so it rides in the step that
+    // check opened. Equal rank is what lets it in there.
+    case HookEventKind.elicitation: return 3;
     case HookEventKind.notification:
       switch (event.notificationType) {
         // permission_prompt is the same fact as PermissionRequest, announced
@@ -116,8 +132,13 @@ function rankOf(event) {
         case NotificationType.idlePrompt: return 9;
         default: return 3;
       }
-    case HookEventKind.postToolUse: return 4;
+    case HookEventKind.postToolUse:
+    case HookEventKind.postToolUseFailure:
+    case HookEventKind.elicitationResult: return 4;
     case HookEventKind.subagentStop: return 5;
+    // The batch closes after every tool in it has settled, so it outranks the
+    // individual results it summarises.
+    case HookEventKind.postToolBatch: return 6;
     case HookEventKind.stop:
     case HookEventKind.stopFailure: return 8;
     case HookEventKind.sessionEnd:
