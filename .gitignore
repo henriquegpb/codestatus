@@ -19,6 +19,11 @@ website/.next/
 website/out/
 website/.vercel
 
+# Windows app — the rest lives in windows/.gitignore
+windows/node_modules/
+windows/test/icons/
+windows/test/shots/
+
 # macOS
 .DS_Store
 

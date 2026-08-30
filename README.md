@@ -39,6 +39,35 @@ discovery, enrichment, and knowing when a session genuinely died.
 If we cannot determine a state, we show `Unknown` or `Reconnecting`. We never announce that a
 session finished because it went quiet.
 
+## Platforms
+
+Two apps, one repository. They are separate implementations of the same product and share no
+build, no dependency, and no runtime.
+
+| | macOS | Windows |
+|---|---|---|
+| Where | repository root | [`windows/`](windows/) |
+| Built with | Swift 6, AppKit/SwiftUI | Node.js, Electron |
+| Status | in daily use | ported, needs hardware verification |
+| Agents | Claude Code, Codex | Claude Code |
+
+```
+Package.swift  Sources/  Tests/  scripts/  Resources/   ← macOS
+windows/                                                ← Windows
+website/  docs/                                         ← shared
+```
+
+The macOS app is the reference implementation: the state machine, the event vocabulary, and the
+honesty rules are defined there and ported. What keeps the two from drifting is that the test
+suites are written as the same cases in both languages — see
+[windows/README.md](windows/README.md#two-apps-one-repository), which explains how that drift
+happened once already and what it cost.
+
+Linux is not supported. The port is cheap — Node's `net` gives Unix sockets with the same API,
+and `src/core/` has no platform in it — but GNOME removed the system tray and Wayland has no way
+to raise another application's window, so the premise of the app is only half available on the
+most common desktop.
+
 ## Privacy
 
 Everything happens on your Mac. There is no account, no server, no telemetry, and no network
