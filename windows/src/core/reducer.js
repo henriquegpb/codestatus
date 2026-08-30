@@ -4,7 +4,8 @@
 //
 // The canonical state machine. Pure and total: no IO, no clock reads, no shared
 // state. Every transition is a function of the current session and one event,
-// which is what makes the duplicate/out-of-order/replay behaviour testable.
+// which is what makes the duplicate/out-of-order/replay behaviour testable
+// against fixtures rather than only end to end.
 
 const { AgentState, StateConfidence } = require('./state');
 const {
@@ -27,7 +28,8 @@ const Outcome = Object.freeze({
 // The state an event implies, or null if the event carries no state meaning.
 //
 // Returning null rather than throwing is what keeps us forward compatible: when
-// an agent adds a new event, we ignore it instead of misclassifying it.
+// an agent adds a new event or notification type, we ignore it instead of
+// misclassifying the session.
 function targetState(event) {
   switch (event.kind) {
     case HookEventKind.sessionStart:

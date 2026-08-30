@@ -33,6 +33,7 @@ const HookEventKind = Object.freeze({
   elicitation: 'Elicitation',
   elicitationResult: 'ElicitationResult',
   stop: 'Stop',
+  // The turn ended because of an API error.
   stopFailure: 'StopFailure',
   subagentStop: 'SubagentStop',
   sessionEnd: 'SessionEnd',
@@ -116,12 +117,19 @@ function isTerminalEvent(event) {
     || event.kind === HookEventKind.processExited;
 }
 
-// The event's position *within* a turn. Ranks exist to reject stragglers that
-// would regress a session. The gaps that matter:
-//  - permissionRequest > preToolUse, so a late PreToolUse does not knock the
-//    session out of waitingForApproval and back into busy.
-//  - postToolUse > permissionRequest, so the tool running after approval does
-//    correctly return the session to busy.
+// Ordering position of this event *within one tool use*.
+//
+// Ranks exist to reject stragglers that would otherwise regress a session. The
+// important gaps:
+//
+//  - permissionRequest outranks preToolUse, so a late PreToolUse cannot knock a
+//    session out of a waiting state back into busy.
+//  - postToolUse outranks permissionRequest, so the tool actually running after
+//    approval does correctly return the session to busy.
+//
+// The scope matters: a turn holds many tool uses, and this ladder only
+// describes the shape of one. LogicalClock is what keeps a second tool use from
+// being ordered against the first one's high-water mark.
 function rankOf(event) {
   switch (event.kind) {
     case HookEventKind.sessionStart: return 0;

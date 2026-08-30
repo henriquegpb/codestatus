@@ -6,6 +6,12 @@
 // domain socket, here a Windows named pipe. The wire format is the same NDJSON
 // and the semantics are the same too — one connection per event, the hook
 // writes and exits.
+//
+// The other difference is how a dead process is noticed. macOS gets kqueue,
+// which tells the app the moment a pid exits. Windows has no equivalent that is
+// cheap from Node, so liveness is polled. Nothing about state depends on the
+// polling interval: a session is only ever removed because its process is gone,
+// never because it went quiet.
 
 const net = require('net');
 const fs = require('fs');

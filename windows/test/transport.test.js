@@ -5,7 +5,9 @@
 //
 // The case that matters most here is privacy. A real Claude Code payload
 // carries the prompt, the tool input, and the transcript path, and none of it
-// may cross the pipe.
+// may cross the pipe. That is asserted against the bytes on the wire, not
+// against the decoded object, so a leak cannot hide in a field we forgot to
+// look at.
 //
 // Needs the app closed: only one process can hold the named pipe.
 

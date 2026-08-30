@@ -46,6 +46,9 @@ function decodeLine(text) {
   const provider = KNOWN_PROVIDERS.has(raw.provider) ? raw.provider : AgentProvider.generic;
   const host = KNOWN_HOSTS.has(raw.host) ? raw.host : HostApplication.unknown;
 
+  // An unmodelled notification_type decodes to null and the reducer no-ops on
+  // it. That is deliberate: see NotificationType for the ones that look like
+  // the signal we want and are about a different session entirely.
   const notificationType = KNOWN_NOTIFICATION_TYPES.has(raw.notification_type)
     ? raw.notification_type
     : null;
@@ -81,6 +84,8 @@ function decodeLine(text) {
     cwd: asString(raw.cwd),
     pid,
     host,
+    // The hook cannot cheaply learn its parent's start time on Windows, so this
+    // is filled in later by the process scan when it matters.
     processStartTime: null,
   };
 }

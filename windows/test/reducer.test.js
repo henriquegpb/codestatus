@@ -2,6 +2,10 @@
 
 // Ported from Tests/CodeStatusCoreTests/StateReducerTests.swift. These are the
 // invariants that keep the app from lying about what a session is doing.
+//
+// Kept in step with the Swift suite deliberately: the two implementations are
+// separate, so these are the only place a divergence between them can be
+// caught. When a case is added there, add it here.
 
 const assert = require('assert');
 const { test, run } = require('./harness');
