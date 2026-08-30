@@ -20,20 +20,16 @@ Fluent-styled interface, and three fixes noted in the history.
 
 ## Install
 
-**Prerequisite:** Node.js 18+ ([nodejs.org](https://nodejs.org)). Not only to
-build it — every hook firing is a `node hook.js`, so without Node the app starts
-and stays permanently empty. The installer checks and stops with a clear message.
+Download **CodeStatus-Setup.exe** from the
+[latest release](https://github.com/henriquegpb/codestatus/releases/latest)
+— or the `-arm64` one on Windows on Arm, which is also what a Windows VM on an
+Apple Silicon Mac runs. Nothing needs to be installed first: the app carries its
+own runtime, including the one the hook runs on.
 
-```powershell
-cd windows
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
-
-Add `-StartWithWindows` to have it come up with Windows.
-
-The installer fetches dependencies, runs the tests on the target machine, and
-creates Start Menu and desktop shortcuts. It does **not** touch your
-`settings.json`: connecting the hooks stays an explicit action, from the app.
+The installer is **not code-signed yet**, so SmartScreen shows a blue panel
+saying the publisher is unrecognised. *More info* → *Run anyway*. There is no
+way around that short of an Authenticode certificate, and pretending otherwise
+would be worse than saying it.
 
 Then:
 
@@ -44,8 +40,26 @@ Then:
 3. **Start a new Claude Code session.** Sessions that were already open will
    never appear: Claude Code reads its hook configuration once, at session start.
 
-To hand the app to a machine without git, `scripts\package.ps1` produces a
-~200 KB zip of the source.
+Uninstalling through Windows removes the hook entries first, so the app does not
+leave entries behind pointing at files it took with it.
+
+### From source
+
+For working on the app, or trying a branch. This is the path that still needs
+[Node.js 18+](https://nodejs.org) — to fetch dependencies and run the tests, not
+to run the hook.
+
+```powershell
+cd windows
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Add `-StartWithWindows` to have it come up with Windows. The script fetches
+dependencies, runs the tests on the target machine, and creates the shortcuts.
+It does **not** touch your `settings.json`.
+
+`scripts\package.ps1` produces a ~200 KB zip of the source, for a machine
+without git.
 
 ## Reading the tray icon
 
@@ -102,7 +116,7 @@ everything that touched the operating system:
 |---|---|
 | Swift 6 + AppKit/SwiftUI | Node.js + Electron |
 | Unix domain socket | Named pipe (`\\.\pipe\codestatus-<user>`) |
-| Compiled `codestatus-hook` binary | `hook/hook.js` run through `node` |
+| Compiled `codestatus-hook` binary | `hook/hook.js` on the app's own Electron |
 | `~/Library/Application Support/CodeStatus` | `%LOCALAPPDATA%\CodeStatus` |
 | Text in the menu bar | Count drawn inside the tray icon |
 | `TERM_PROGRAM` names the terminal | Environment, then the process tree |
@@ -143,17 +157,40 @@ There is a regression test for it, and the ownership detector recognises both
 formats so anyone who installed before the fix does not end up with duplicate
 entries firing the hook twice.
 
-### The cost this build carries
+### How the hook gets a runtime
+
+Claude Code's hook schema has `command`, `args`, `timeout`, `async` and `shell`,
+and no field that sets an environment variable. That one gap decides the shape
+of `src/platform/runtime.js`.
+
+The app ships an Electron binary, and an Electron binary *is* Node when
+`ELECTRON_RUN_AS_NODE` is set. With no way to set it in the hook entry, the
+installer would otherwise have to carry a second runtime to run 250 lines of
+JavaScript — `node.exe` alone is 78 MB, which is most of an installer, for a job
+the binary next to it can already do.
+
+So the installer writes a four-line `.cmd` that sets the variable and hands
+over, and registers `cmd.exe /c <shim>`. Still the exec form: the executable is
+cmd.exe, with an argument vector we control. It costs one cmd.exe per event,
+around ten milliseconds.
+
+The shim takes no arguments, and that is load-bearing. Its path contains the
+user's profile name, which may contain a space, so Windows quotes it — and
+`cmd /c` preserves those quotes only when nothing follows the closing one. Put
+`--provider claude-code` after it and cmd strips the pair instead, then tries to
+run `C:\Users\John`. The provider is baked into the shim for that reason, and a
+second agent would get a second shim.
+
+### The cost this build still carries
 
 The macOS hook is a compiled, deliberately Foundation-free binary, because it
-runs on every agent tool call. Here it is a Node cold start — tens of
-milliseconds of real work per event, times fourteen registered events.
+runs on every agent tool call. Here it is a Node cold start plus a cmd.exe —
+tens of milliseconds of real work per event, times fourteen registered events.
 `async: true` keeps it off the agent's critical path; it does not make it free.
 
-Replacing it with a small compiled binary is the one change worth making before
-this is given to anyone who did not choose Electron knowingly. Nothing else in
-the design depends on the hook's language: it writes one NDJSON line to a named
-pipe.
+A compiled hook would remove the cold start and the runtime question together,
+and it is the next thing worth doing. Nothing in the design depends on the
+hook's language: it writes one NDJSON line to a named pipe.
 
 ## Known limitations
 
@@ -166,6 +203,7 @@ pipe.
   to drag it out once.
 - **No acrylic on Windows 10.** The DWM materials arrived in Windows 11 (build
   22000); below that the windows paint a solid Fluent surface instead.
+- **The installer is unsigned.** SmartScreen warns once, per the note above.
 
 ## Layout
 
@@ -180,7 +218,8 @@ windows/
 │   ├── ui/              tray icon, popover, settings window
 │   └── main.js          the Electron main process, wiring the above together
 ├── test/
-└── scripts/             install, package, and a console launcher for debugging
+├── scripts/             source install, packaging, console launcher
+└── build/               NSIS hooks for the published installer
 ```
 
 `src/core/` has no Windows in it and no Electron in it — it is the part that
