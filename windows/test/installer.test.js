@@ -111,6 +111,15 @@ test('Installing creates the file when it does not exist', () => {
   assert.strictEqual(installer.isInstalled(), true);
 });
 
+test('Installing records when it happened, for the unreported diagnosis', () => {
+  write({});
+  const before = Date.now();
+  installer.install();
+  const at = installer.hooksInstalledAt().claudeCode;
+  assert.ok(at, 'no install time was recorded');
+  assert.ok(at >= before - 1000 && at <= Date.now() + 1000);
+});
+
 // --- uninstall --------------------------------------------------------------
 
 test('Uninstalling removes only our entries and restores the file', () => {
@@ -232,6 +241,7 @@ for (const [name, fn] of tests) {
   try {
     // Every case starts from a clean file.
     try { fs.unlinkSync(SETTINGS); } catch { /* did not exist */ }
+    try { fs.unlinkSync(require('../src/platform/paths').paths.installReceipts); } catch { /* ditto */ }
     fn();
     console.log(`  ok    ${name}`);
   } catch (err) {

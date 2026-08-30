@@ -21,6 +21,8 @@ const { decodeLine, processExitedEvent } = require('./decoder');
 const { LogicalClock } = require('../core/clock');
 const { AgentState, isActive } = require('../core/state');
 const { HostApplication } = require('../core/events');
+const { diagnose } = require('../core/diagnosis');
+const installer = require('../install/claude');
 
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const SPOOL_DRAIN_INTERVAL_MS = 2 * 1000;
@@ -294,10 +296,16 @@ class Daemon extends EventEmitter {
   }
 
   snapshot() {
+    const unreported = this.registry.unreported;
     return {
       counts: this.registry.counts(),
       sessions: this.registry.visible,
-      unreportedCount: this.registry.unreported.length,
+      unreportedCount: unreported.length,
+      diagnosis: diagnose({
+        sessions: unreported,
+        hooksInstalledAt: installer.hooksInstalledAt(),
+        connectedProviders: installer.connectedProviders(),
+      }),
       scanFailed: this.lastScanFailed,
     };
   }

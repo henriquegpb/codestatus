@@ -22,6 +22,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const { paths } = require('../platform/paths');
+const { AgentProvider } = require('../core/events');
 
 // Every lifecycle hook Claude Code emits that changes what we can say about a
 // session's state. Kept in step with ClaudeHookInstaller.events on macOS.
@@ -220,6 +221,25 @@ function isInstalled() {
   }
 }
 
+// Providers whose hook entries are in their config file right now. What the
+// diagnosis uses to tell "never connected" from "started before the install".
+function connectedProviders() {
+  const connected = new Set();
+  if (isInstalled()) connected.add(AgentProvider.claudeCode);
+  return connected;
+}
+
+// When each provider's hooks were written, as epoch milliseconds.
+function hooksInstalledAt() {
+  const out = {};
+  const receipt = loadReceipts()[paths.claudeSettings];
+  if (receipt && receipt.installedAt) {
+    const at = Date.parse(receipt.installedAt);
+    if (!Number.isNaN(at)) out[AgentProvider.claudeCode] = at;
+  }
+  return out;
+}
+
 function install() {
   // Fail loudly and early rather than writing an entry that can never run.
   // Without a node on disk the hook is a command Claude Code tries to execute
@@ -244,6 +264,7 @@ function install() {
   // guessing.
   const receipt = {
     targetPath: paths.claudeSettings,
+    provider: AgentProvider.claudeCode,
     createdFile: !existed,
     createdHooksKey: !settings.hooks,
     createdEventKeys: [],
@@ -333,4 +354,6 @@ module.exports = {
   isOurEntry,
   hookInvocation,
   resolveNodePath,
+  connectedProviders,
+  hooksInstalledAt,
 };
