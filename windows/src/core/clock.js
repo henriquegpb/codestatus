@@ -2,11 +2,11 @@
 
 const { isTerminalEvent, rankOf } = require('./events');
 
-// Porte de LogicalClock (Sources/CodeStatusCore/Domain/AgentSession.swift).
+// Port of LogicalClock (Sources/CodeStatusCore/Domain/AgentSession.swift).
 //
-// Hooks rodam concorrentes e assincronos, entao a ordem de entrega nao e
-// garantida. Turn ids sao strings opacas sem ordem inerente, entao damos a cada
-// turno novo um numero de sequencia monotonico e ordenamos por (turno, rank).
+// Hooks run concurrently and asynchronously, so delivery order is not
+// guaranteed. Turn ids are opaque strings with no inherent order, so we give
+// every new turn a monotonic sequence number and order by (turn, rank).
 class LogicalClock {
   constructor(init) {
     this.turnSequence = init ? init.turnSequence : 0;
@@ -14,7 +14,7 @@ class LogicalClock {
     this.currentTurnID = init ? init.currentTurnID : null;
   }
 
-  // Retorna a posicao do evento, atribuindo sequencia nova se o turno e inedito.
+  // The event's position, assigning a fresh sequence if the turn is new.
   position(event) {
     const turnID = event.providerTurnID;
     if (turnID === null || turnID === undefined) {
@@ -23,7 +23,7 @@ class LogicalClock {
     if (turnID === this.currentTurnID) {
       return { turn: this.turnSequence, rank: rankOf(event) };
     }
-    // Um turno que nunca vimos: e mais novo que tudo ate agora.
+    // A turn we have never seen: it is newer than everything so far.
     return { turn: this.turnSequence + 1, rank: rankOf(event) };
   }
 

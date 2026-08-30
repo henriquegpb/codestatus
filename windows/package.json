@@ -1,17 +1,19 @@
 {
-  "name": "codestatus-win",
-  "version": "1.0.0",
-  "description": "Monitor de sessoes do Claude Code na bandeja do Windows",
+  "name": "codestatus-windows",
+  "version": "0.4.0",
+  "description": "Session monitor for Claude Code, in the Windows system tray",
   "main": "src/main.js",
+  "license": "MIT",
+  "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node test/reducer.test.js && node test/installer.test.js && node test/transport.test.js",
+    "test": "npm run test:unit && npm run test:transport",
+    "test:unit": "node test/reducer.test.js && node test/installer.test.js",
     "test:reducer": "node test/reducer.test.js",
     "test:installer": "node test/installer.test.js",
     "test:transport": "node test/transport.test.js",
-    "test:e2e": "node test/e2e-live.js"
+    "icons": "electron test/render-icons.js"
   },
-  "license": "MIT",
   "devDependencies": {
     "electron": "^43.4.1"
   }

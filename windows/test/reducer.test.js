@@ -1,9 +1,10 @@
 'use strict';
 
-// Porte dos casos de Tests/CodeStatusCoreTests/StateReducerTests.swift.
-// Sao os invariantes que impedem o app de mentir sobre o estado de uma sessao.
+// Ported from Tests/CodeStatusCoreTests/StateReducerTests.swift. These are the
+// invariants that keep the app from lying about what a session is doing.
 
 const assert = require('assert');
+const { test, run } = require('./harness');
 
 const { AgentState, isTurnCompletion } = require('../src/core/state');
 const {
@@ -52,40 +53,37 @@ function newSession(state = AgentState.discovering) {
   });
 }
 
-function run(session, events) {
-  const outcomes = [];
-  for (const e of events) outcomes.push(reduce(session, e).outcome);
-  return outcomes;
+function apply(session, events) {
+  return events.map((e) => reduce(session, e).outcome);
 }
 
-const tests = [];
-function test(name, fn) { tests.push([name, fn]); }
+// --- the basic cycle --------------------------------------------------------
 
-// --- ciclo basico ------------------------------------------------------------
-
-test('Um turno completo caminha discovering -> free -> busy -> free', () => {
+test('A whole turn walks discovering -> free -> busy -> free', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.sessionStart),
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.preToolUse, { turn: 't1' }),
     ev(HookEventKind.postToolUse, { turn: 't1' }),
   ]);
   assert.strictEqual(s.state, AgentState.busy);
-  run(s, [ev(HookEventKind.stop, { turn: 't1' })]);
+  apply(s, [ev(HookEventKind.stop, { turn: 't1' })]);
   assert.strictEqual(s.state, AgentState.free);
 });
 
-test('Stop significa que o turno acabou, nao a sessao - ela continua contavel', () => {
+test('Stop means the turn ended, not the session — it stays countable', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' }), ev(HookEventKind.stop, { turn: 't1' })]);
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.stop, { turn: 't1' }),
+  ]);
   assert.strictEqual(s.state, AgentState.free);
-  assert.notStrictEqual(s.state, AgentState.ended);
 });
 
-test('Um segundo turno e ordenado depois do primeiro', () => {
+test('A second turn is ordered after the first', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.stop, { turn: 't1' }),
     ev(HookEventKind.userPromptSubmit, { turn: 't2' }),
@@ -93,17 +91,20 @@ test('Um segundo turno e ordenado depois do primeiro', () => {
   assert.strictEqual(s.state, AgentState.busy);
 });
 
-// --- aprovacao ---------------------------------------------------------------
+// --- approval ---------------------------------------------------------------
 
-test('PermissionRequest bloqueia aguardando aprovacao', () => {
+test('PermissionRequest blocks on approval', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' }), ev(HookEventKind.permissionRequest, { turn: 't1' })]);
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1' }),
+  ]);
   assert.strictEqual(s.state, AgentState.waitingForApproval);
 });
 
-test('Aprovar deixa a ferramenta rodar, devolvendo a sessao para busy', () => {
+test('Approving lets the tool run, returning the session to busy', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.permissionRequest, { turn: 't1' }),
     ev(HookEventKind.postToolUse, { turn: 't1' }),
@@ -111,9 +112,9 @@ test('Aprovar deixa a ferramenta rodar, devolvendo a sessao para busy', () => {
   assert.strictEqual(s.state, AgentState.busy);
 });
 
-test('Um PreToolUse atrasado nao tira a sessao de waitingForApproval', () => {
+test('A late PreToolUse does not knock the session out of waitingForApproval', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.permissionRequest, { turn: 't1' }),
     ev(HookEventKind.preToolUse, { turn: 't1' }),
@@ -121,9 +122,9 @@ test('Um PreToolUse atrasado nao tira a sessao de waitingForApproval', () => {
   assert.strictEqual(s.state, AgentState.waitingForApproval);
 });
 
-test('Um PostToolUse atrasado nao ressuscita busy depois do Stop', () => {
+test('A late PostToolUse does not revive busy after Stop', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.stop, { turn: 't1' }),
     ev(HookEventKind.postToolUse, { turn: 't1' }),
@@ -131,9 +132,9 @@ test('Um PostToolUse atrasado nao ressuscita busy depois do Stop', () => {
   assert.strictEqual(s.state, AgentState.free);
 });
 
-// --- notificacoes ------------------------------------------------------------
+// --- notifications ----------------------------------------------------------
 
-test('Subtipos de Notification mapeiam para estados distintos', () => {
+test('Notification subtypes map to distinct states', () => {
   const cases = [
     [NotificationType.permissionPrompt, AgentState.waitingForApproval],
     [NotificationType.idlePrompt, AgentState.waitingForInput],
@@ -141,35 +142,36 @@ test('Subtipos de Notification mapeiam para estados distintos', () => {
   ];
   for (const [type, expected] of cases) {
     const s = newSession();
-    run(s, [ev(HookEventKind.notification, { notificationType: type })]);
-    assert.strictEqual(s.state, expected, `${type} deveria virar ${expected}`);
+    apply(s, [ev(HookEventKind.notification, { notificationType: type })]);
+    assert.strictEqual(s.state, expected, `${type} should become ${expected}`);
   }
 });
 
-test('Um subtipo de Notification desconhecido e ignorado, nao chutado', () => {
+test('An unknown Notification subtype is ignored, not guessed', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
-  const outcomes = run(s, [ev(HookEventKind.notification, { notificationType: 'agent_needs_input' })]);
+  apply(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
+  const outcomes = apply(s, [
+    ev(HookEventKind.notification, { notificationType: 'agent_needs_input' }),
+  ]);
   assert.strictEqual(outcomes[0], Outcome.ignoredUnmapped);
   assert.strictEqual(s.state, AgentState.busy);
 });
 
-// --- falha -------------------------------------------------------------------
+// --- failure ----------------------------------------------------------------
 
-test('Um turno que falhou nunca e contado como livre', () => {
+test('A failed turn is never counted as free', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.stopFailure, { turn: 't1', errorType: 'api_error' }),
   ]);
   assert.strictEqual(s.state, AgentState.failed);
-  assert.notStrictEqual(s.state, AgentState.free);
   assert.strictEqual(s.lastError, 'api_error');
 });
 
-test('Recuperar da falha limpa o erro registrado', () => {
+test('Recovering from a failure clears the recorded error', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.stopFailure, { turn: 't1', errorType: 'api_error' }),
     ev(HookEventKind.userPromptSubmit, { turn: 't2' }),
@@ -178,28 +180,28 @@ test('Recuperar da falha limpa o erro registrado', () => {
   assert.strictEqual(s.lastError, null);
 });
 
-// --- terminalidade -----------------------------------------------------------
+// --- terminality ------------------------------------------------------------
 
-test('SessionEnd vence mesmo chegando fora de ordem', () => {
+test('SessionEnd wins even when it arrives out of order', () => {
   const s = newSession();
-  run(s, [
+  apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't5' }),
     ev(HookEventKind.sessionEnd, { turn: 't1' }),
   ]);
   assert.strictEqual(s.state, AgentState.ended);
 });
 
-test('A saida do processo encerra uma sessao que nunca mandou SessionEnd', () => {
+test('Process exit ends a session that never sent SessionEnd', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
-  run(s, [ev(HookEventKind.processExited, { source: EventSource.process })]);
+  apply(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
+  apply(s, [ev(HookEventKind.processExited, { source: EventSource.process })]);
   assert.strictEqual(s.state, AgentState.ended);
 });
 
-test('Nada revive uma sessao encerrada', () => {
+test('Nothing revives an ended session', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.sessionEnd)]);
-  const outcomes = run(s, [
+  apply(s, [ev(HookEventKind.sessionEnd)]);
+  const outcomes = apply(s, [
     ev(HookEventKind.userPromptSubmit, { turn: 't9' }),
     ev(HookEventKind.sessionStart),
   ]);
@@ -207,57 +209,55 @@ test('Nada revive uma sessao encerrada', () => {
   assert.strictEqual(s.state, AgentState.ended);
 });
 
-// --- silencio e enriquecimento ----------------------------------------------
+// --- silence and enrichment -------------------------------------------------
 
-test('Tempo parado nunca muda o estado sozinho', () => {
+test('Elapsed time never changes the state on its own', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
-  const before = s.state;
+  apply(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1' })]);
   clockMs += 10 * 60 * 1000;
-  assert.strictEqual(s.state, before);
   assert.strictEqual(s.state, AgentState.busy);
 });
 
-test('Um evento posterior sem metadado nunca apaga o que ja sabiamos', () => {
+test('A later event with no metadata never erases what we knew', () => {
   const s = newSession();
-  run(s, [ev(HookEventKind.sessionStart, { cwd: 'C:\\repo\\alpha', model: 'opus' })]);
+  apply(s, [ev(HookEventKind.sessionStart, { cwd: 'C:\\repo\\alpha', model: 'opus' })]);
   assert.strictEqual(s.cwd, 'C:\\repo\\alpha');
-  run(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1', cwd: null, model: null })]);
+  apply(s, [ev(HookEventKind.userPromptSubmit, { turn: 't1', cwd: null, model: null })]);
   assert.strictEqual(s.cwd, 'C:\\repo\\alpha');
   assert.strictEqual(s.model, 'opus');
 });
 
-// --- aviso de conclusao ------------------------------------------------------
+// --- completion notices -----------------------------------------------------
 
-test('Um turno que termina conta como conclusao', () => {
+test('A turn that ends counts as a completion', () => {
   assert.strictEqual(isTurnCompletion(AgentState.busy, AgentState.free), true);
 });
 
-test('Destravar e terminar tambem conta como conclusao', () => {
+test('Unblocking and then finishing counts too', () => {
   assert.strictEqual(isTurnCompletion(AgentState.waitingForApproval, AgentState.free), true);
   assert.strictEqual(isTurnCompletion(AgentState.waitingForInput, AgentState.free), true);
 });
 
-test('Abrir uma sessao NAO conta como conclusao', () => {
-  // SessionStart tambem chega em `free`. Avisar aqui diria "terminou" no exato
-  // momento em que nada comecou.
+test('Opening a session does NOT count as a completion', () => {
+  // SessionStart also arrives at `free`. Announcing here would say "finished"
+  // at the exact moment nothing has started.
   assert.strictEqual(isTurnCompletion(AgentState.discovering, AgentState.free), false);
 });
 
-test('Reconectar apos reiniciar o app NAO conta como conclusao', () => {
+test('Reconnecting after an app restart does NOT count as a completion', () => {
   assert.strictEqual(isTurnCompletion(AgentState.reconnecting, AgentState.free), false);
 });
 
-test('Nada que nao termine em livre conta como conclusao', () => {
+test('Nothing that does not end at free counts as a completion', () => {
   assert.strictEqual(isTurnCompletion(AgentState.busy, AgentState.failed), false);
   assert.strictEqual(isTurnCompletion(AgentState.busy, AgentState.waitingForApproval), false);
   assert.strictEqual(isTurnCompletion(AgentState.busy, AgentState.ended), false);
 });
 
-test('O fluxo real de um turno produz exatamente uma conclusao', () => {
+test('A real turn produces exactly one completion', () => {
   const s = newSession();
-  const conclusoes = [];
-  const eventos = [
+  const completions = [];
+  const events = [
     ev(HookEventKind.sessionStart),
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
     ev(HookEventKind.preToolUse, { turn: 't1' }),
@@ -265,20 +265,20 @@ test('O fluxo real de um turno produz exatamente uma conclusao', () => {
     ev(HookEventKind.postToolUse, { turn: 't1' }),
     ev(HookEventKind.stop, { turn: 't1' }),
   ];
-  for (const e of eventos) {
+  for (const e of events) {
     const r = reduce(s, e);
     if (r.outcome === Outcome.stateChanged
       && isTurnCompletion(r.transition.from, r.transition.to)) {
-      conclusoes.push(r.transition);
+      completions.push(r.transition);
     }
   }
-  assert.strictEqual(conclusoes.length, 1, 'deveria avisar uma vez, no Stop');
-  assert.strictEqual(conclusoes[0].from, AgentState.busy);
+  assert.strictEqual(completions.length, 1, 'should announce once, at Stop');
+  assert.strictEqual(completions[0].from, AgentState.busy);
 });
 
-// --- registry ----------------------------------------------------------------
+// --- registry ---------------------------------------------------------------
 
-test('Reproduzir um fluxo identico e no-op depois da primeira passada', () => {
+test('Replaying an identical stream is a no-op after the first pass', () => {
   const events = [
     ev(HookEventKind.sessionStart),
     ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
@@ -288,13 +288,12 @@ test('Reproduzir um fluxo identico e no-op depois da primeira passada', () => {
   for (const e of events) registry.apply(e);
   const stateAfterFirst = registry.get('claudeCode:sess-1').state;
 
-  // Mesmos ids: o deduplicador precisa descartar tudo.
   const second = events.flatMap((e) => registry.apply(e));
   assert.ok(second.every((eff) => eff.type === 'eventDropped' && eff.reason === 'duplicate'));
   assert.strictEqual(registry.get('claudeCode:sess-1').state, stateAfterFirst);
 });
 
-test('So sessoes com evidencia de hook entram nos contadores', () => {
+test('Only sessions with hook evidence enter the counts', () => {
   const registry = new SessionRegistry();
   registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1' }));
   assert.strictEqual(registry.counts().busy, 1);
@@ -302,7 +301,7 @@ test('So sessoes com evidencia de hook entram nos contadores', () => {
   assert.strictEqual(registry.unreported.length, 0);
 });
 
-test('Uma sessao encerrada sai dos contadores', () => {
+test('An ended session leaves the counts', () => {
   const registry = new SessionRegistry();
   registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1' }));
   registry.apply(ev(HookEventKind.sessionEnd));
@@ -310,18 +309,4 @@ test('Uma sessao encerrada sai dos contadores', () => {
   assert.strictEqual(registry.visible.length, 0);
 });
 
-// --- execucao ----------------------------------------------------------------
-
-let failed = 0;
-for (const [name, fn] of tests) {
-  try {
-    fn();
-    console.log(`  ok   ${name}`);
-  } catch (err) {
-    failed += 1;
-    console.log(`  FALHOU ${name}`);
-    console.log(`         ${err.message}`);
-  }
-}
-console.log(`\n${tests.length - failed}/${tests.length} passaram`);
-process.exit(failed === 0 ? 0 : 1);
+run('reducer');

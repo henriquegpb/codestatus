@@ -1,10 +1,10 @@
 'use strict';
 
-// Porte de Sources/CodeStatusCore/Runtime/EventWireDecoder.swift
+// Port of Sources/CodeStatusCore/Runtime/EventWireDecoder.swift
 //
-// Converte uma linha NDJSON vinda do hook num AgentEvent normalizado. Tudo aqui
-// e defensivo: a linha veio de outro processo e pode estar truncada, repetida ou
-// de uma versao mais nova do hook.
+// Turns one NDJSON line from the hook into a normalised event. Everything here
+// is defensive: the line came from another process and may be truncated,
+// repeated, or from a newer version of the hook.
 
 const {
   EventSource,
@@ -23,9 +23,9 @@ function asString(value) {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-// Decodifica uma linha. Devolve null quando a linha nao e utilizavel - o
-// chamador simplesmente a descarta, porque um hook de uma versao futura mandando
-// algo que nao entendemos nao pode derrubar o daemon.
+// Decodes one line. Returns null when the line is unusable — the caller simply
+// drops it, because a hook from a future version sending something we do not
+// understand must not take the daemon down.
 function decodeLine(text) {
   let raw;
   try {
@@ -39,8 +39,8 @@ function decodeLine(text) {
   if (!id) return null;
 
   const kind = asString(raw.hook_event_name);
-  // Um evento que nao esta no vocabulario e ignorado em vez de mal classificado:
-  // e o que mantem a compatibilidade quando o agente adiciona eventos novos.
+  // An event outside the vocabulary is ignored rather than misclassified: this
+  // is what keeps us compatible when the agent adds new events.
   if (!kind || !KNOWN_EVENT_KINDS.has(kind)) return null;
 
   const provider = KNOWN_PROVIDERS.has(raw.provider) ? raw.provider : AgentProvider.generic;
@@ -50,7 +50,7 @@ function decodeLine(text) {
     ? raw.notification_type
     : null;
 
-  // O hook manda segundos com fracao; o resto do app trabalha em milissegundos.
+  // The hook sends fractional seconds; the rest of the app works in milliseconds.
   const ts = typeof raw.ts === 'number' && Number.isFinite(raw.ts)
     ? Math.round(raw.ts * 1000)
     : Date.now();
@@ -65,8 +65,8 @@ function decodeLine(text) {
     timestamp: ts,
 
     providerSessionID: asString(raw.session_id),
-    // O Claude Code usa turn_id em alguns eventos e prompt_id em outros; os dois
-    // delimitam o mesmo turno para efeito de ordenacao.
+    // Claude Code uses turn_id on some events and prompt_id on others; both
+    // delimit the same turn for ordering purposes.
     providerTurnID: asString(raw.turn_id) || asString(raw.prompt_id),
 
     notificationType,
@@ -85,7 +85,7 @@ function decodeLine(text) {
   };
 }
 
-// Evento sintetico usado quando o processo do agente some sem SessionEnd.
+// Synthetic event used when the agent's process disappears without a SessionEnd.
 function processExitedEvent(pid, now = Date.now()) {
   return {
     id: `exit-${pid}-${now}`,

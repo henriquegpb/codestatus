@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
@@ -93,9 +93,9 @@
   </header>
 
   <div class="counts">
-    <div class="chip needs"><b id="c-needs">0</b><span>precisa</span></div>
-    <div class="chip busy"><b id="c-busy">0</b><span>trabalhando</span></div>
-    <div class="chip free"><b id="c-free">0</b><span>livre</span></div>
+    <div class="chip needs"><b id="c-needs">0</b><span>needs you</span></div>
+    <div class="chip busy"><b id="c-busy">0</b><span>busy</span></div>
+    <div class="chip free"><b id="c-free">0</b><span>free</span></div>
   </div>
 
   <ul id="list"></ul>
@@ -123,16 +123,16 @@
     if (!data.installed) {
       const div = document.createElement('div');
       div.className = 'empty';
-      div.textContent = 'Os hooks do Claude Code ainda nao estao instalados, entao nada pode ser observado.';
+      div.textContent = 'The Claude Code hooks are not installed yet, so nothing can be observed.';
       const btn = document.createElement('button');
-      btn.textContent = 'Conectar Claude Code';
-      btn.onclick = () => window.codestatus.installHooks();
+      btn.textContent = 'Connect Claude Code';
+      btn.onclick = () => window.codestatus.connect();
       div.appendChild(btn);
       list.appendChild(div);
     } else if (data.sessions.length === 0) {
       const div = document.createElement('div');
       div.className = 'empty';
-      div.textContent = 'Nenhuma sessao ativa. Abra o Claude Code em um terminal e ela aparece aqui.';
+      div.textContent = 'No active sessions. Open Claude Code in a terminal and it will appear here.';
       list.appendChild(div);
     } else {
       for (const s of data.sessions) {
@@ -164,9 +164,9 @@
       }
     }
 
-    footer.textContent = data.unreported > 0
-      ? data.unreported + ' sessao(oes) rodando sem hooks - abra uma sessao nova para ve-la'
-      : 'Clique numa sessao para voltar a janela dela';
+    footer.textContent = data.unreportedCount > 0
+      ? data.unreportedCount + ' session(s) running without hooks — open a new one to see it'
+      : 'Click a session to bring its window back';
   }
 
   window.codestatus.onState(render);

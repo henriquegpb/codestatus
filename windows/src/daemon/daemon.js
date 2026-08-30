@@ -1,36 +1,39 @@
 'use strict';
 
-// Porte de EventSocketServer + EventSpool + ProcessWatcher + StatePersistence.
+// Port of EventSocketServer + EventSpool + ProcessWatcher + StatePersistence.
 //
-// O transporte e a maior diferenca em relacao ao original: la e um socket de
-// dominio Unix, aqui e um named pipe do Windows. O formato na linha e o mesmo
-// NDJSON, e a semantica tambem - uma conexao por evento, o hook escreve e sai.
+// The transport is the biggest difference from the original: there it is a Unix
+// domain socket, here a Windows named pipe. The wire format is the same NDJSON
+// and the semantics are the same too — one connection per event, the hook
+// writes and exits.
 
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 
-const { paths, pipeName, createDirectories } = require('../core/paths');
+const { paths, createDirectories } = require('../platform/paths');
+const { pipeName } = require('../platform/transport');
 const { SessionRegistry } = require('../core/registry');
 const { decodeLine, processExitedEvent } = require('./decoder');
 const { LogicalClock } = require('../core/clock');
 const { AgentState } = require('../core/state');
 
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
-const PROCESS_CHECK_INTERVAL_MS = 5 * 1000;
+const SPOOL_DRAIN_INTERVAL_MS = 2 * 1000;
+const LIVENESS_INTERVAL_MS = 5 * 1000;
 const SWEEP_INTERVAL_MS = 4 * 1000;
 const PERSIST_DEBOUNCE_MS = 1500;
 const MAX_LINE_BYTES = 64 * 1024;
 
-// Um pid que nao existe mais e o unico fato que a observacao de processo pode
-// afirmar sobre estado. process.kill(pid, 0) nao envia sinal: so testa.
+// A pid that no longer exists is the one fact process observation can assert
+// about state. process.kill(pid, 0) sends no signal: it only tests.
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // EPERM significa que o processo existe mas nao e nosso - ainda esta vivo.
+    // EPERM means the process exists but is not ours — still alive.
     return err.code === 'EPERM';
   }
 }
@@ -52,11 +55,11 @@ class Daemon extends EventEmitter {
     this.touchHeartbeat();
 
     this.timers.push(setInterval(() => this.touchHeartbeat(), HEARTBEAT_INTERVAL_MS));
-    this.timers.push(setInterval(() => this.drainSpool(), 2000));
-    this.timers.push(setInterval(() => this.checkProcesses(), PROCESS_CHECK_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.drainSpool(), SPOOL_DRAIN_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.checkLiveness(), LIVENESS_INTERVAL_MS));
     this.timers.push(setInterval(() => this.sweep(), SWEEP_INTERVAL_MS));
 
-    // Eventos que chegaram enquanto o app estava fechado.
+    // Events that arrived while the app was closed.
     this.drainSpool();
   }
 
@@ -66,12 +69,12 @@ class Daemon extends EventEmitter {
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persist();
     if (this.server) {
-      try { this.server.close(); } catch { /* ignora */ }
+      try { this.server.close(); } catch { /* ignore */ }
       this.server = null;
     }
   }
 
-  // MARK: - Transporte
+  // MARK: - Transport
 
   listen() {
     const server = net.createServer((socket) => {
@@ -79,7 +82,7 @@ class Daemon extends EventEmitter {
       socket.setEncoding('utf8');
       socket.on('data', (chunk) => {
         buffer += chunk;
-        // Uma linha absurdamente longa e lixo ou ataque; corta a conexao.
+        // An absurdly long line is junk or an attack; drop the connection.
         if (buffer.length > MAX_LINE_BYTES) {
           buffer = '';
           socket.destroy();
@@ -93,7 +96,8 @@ class Daemon extends EventEmitter {
           index = buffer.indexOf('\n');
         }
       });
-      socket.on('error', () => { /* o hook pode sumir a qualquer momento */ });
+
+      socket.on('error', () => { /* the hook may vanish at any moment */ });
     });
 
     server.on('error', (err) => {
@@ -101,12 +105,11 @@ class Daemon extends EventEmitter {
     });
 
     server.listen(this.pipe, () => {
-      // O ponteiro em disco existe para o hook descobrir o pipe sem te-lo
-      // compilado dentro - assim o nome pode mudar sem reescrever a config
-      // de nenhum agente.
+      // The on-disk pointer exists so the hook can find the pipe without having
+      // it compiled in — the name can change without rewriting any agent config.
       try {
         fs.writeFileSync(paths.pipePointer, this.pipe, 'utf8');
-      } catch { /* sem ponteiro o hook cai no spool */ }
+      } catch { /* without the pointer the hook falls back to the spool */ }
       this.emit('listening', this.pipe);
     });
 
@@ -129,7 +132,7 @@ class Daemon extends EventEmitter {
 
   // MARK: - Spool
 
-  // Reproduz eventos que o hook gravou quando nao conseguiu nos alcancar.
+  // Replays events the hook wrote when it could not reach us.
   drainSpool() {
     let names;
     try {
@@ -139,7 +142,7 @@ class Daemon extends EventEmitter {
     }
     if (names.length === 0) return;
 
-    // Ordem de chegada importa: os nomes comecam com o timestamp em ms.
+    // Arrival order matters: the names start with the timestamp in ms.
     names.sort();
     for (const name of names) {
       const full = path.join(paths.spool, name);
@@ -149,24 +152,25 @@ class Daemon extends EventEmitter {
           if (line.trim()) this.ingest(line);
         }
       } catch {
-        /* arquivo corrompido: some com ele mesmo assim */
+        /* corrupt file: delete it anyway */
       }
-      try { fs.unlinkSync(full); } catch { /* ignora */ }
+      try { fs.unlinkSync(full); } catch { /* ignore */ }
     }
   }
 
   // MARK: - Liveness
 
-  // O heartbeat e o que autoriza o hook a enfileirar em disco. Se o app for
-  // apagado, ele para de ser tocado e o hook para de enfileirar.
+  // The heartbeat is what authorises the hook to queue to disk. If the app is
+  // deleted it stops being touched, and the hook stops queueing.
   touchHeartbeat() {
     try {
       fs.writeFileSync(paths.heartbeat, String(Date.now()), 'utf8');
-    } catch { /* ignora */ }
+    } catch { /* ignore */ }
   }
 
-  // Uma sessao cujo processo sumiu sem SessionEnd precisa sair dos contadores.
-  checkProcesses() {
+  // A session whose process disappeared without a SessionEnd has to leave the
+  // counts.
+  checkLiveness() {
     for (const session of this.registry.all) {
       if (session.state === AgentState.ended || !session.pid) continue;
       if (!isAlive(session.pid)) {
@@ -175,15 +179,7 @@ class Daemon extends EventEmitter {
     }
   }
 
-  sweep() {
-    const removed = this.registry.sweep();
-    if (removed.length > 0) {
-      this.emit('effects', removed.map((id) => ({ type: 'sessionRemoved', sessionID: id })), this.snapshot());
-      this.schedulePersist();
-    }
-  }
-
-  // MARK: - Persistencia
+  // MARK: - Persistence
 
   schedulePersist() {
     if (this.persistTimer) return;
@@ -198,11 +194,11 @@ class Daemon extends EventEmitter {
       const tmp = `${paths.sessionsSnapshot}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(this.registry.toJSON()), 'utf8');
       fs.renameSync(tmp, paths.sessionsSnapshot);
-    } catch { /* ignora */ }
+    } catch { /* ignore */ }
   }
 
-  // Ao voltar, o que estava rodando so pode ser reafirmado se o processo ainda
-  // existe. O resto e descartado em vez de exibido como verdade antiga.
+  // On the way back, what was running can only be reasserted if the process
+  // still exists. The rest is discarded rather than displayed as stale truth.
   restore() {
     let saved;
     try {
@@ -216,8 +212,8 @@ class Daemon extends EventEmitter {
       if (s.state === AgentState.ended) continue;
       if (!s.pid || !isAlive(s.pid)) continue;
       s.clock = new LogicalClock(s.clock);
-      // O app reiniciou: perdemos eventos, entao o estado deixa de ser
-      // confiavel ate um hook novo chegar. Nao inventamos que continua busy.
+      // The app restarted: we lost events, so the state stops being trustworthy
+      // until a fresh hook arrives. We do not invent that it is still busy.
       s.previousState = s.state;
       s.state = AgentState.reconnecting;
       this.registry.sessions.set(s.id, s);
@@ -229,7 +225,7 @@ class Daemon extends EventEmitter {
     return {
       counts: this.registry.counts(),
       sessions: this.registry.visible,
-      unreported: this.registry.unreported.length,
+      unreportedCount: this.registry.unreported.length,
     };
   }
 }

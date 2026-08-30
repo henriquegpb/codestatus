@@ -1,30 +1,35 @@
 'use strict';
 
-// Porte de Sources/CodeStatusCore/Domain/StateReducer.swift
+// Port of Sources/CodeStatusCore/Domain/StateReducer.swift
 //
-// A maquina de estados canonica. Pura e total: sem IO, sem leitura de relogio,
-// sem estado compartilhado. Toda transicao e funcao da sessao atual + um evento,
-// que e o que torna o comportamento de duplicata/fora-de-ordem/replay testavel.
+// The canonical state machine. Pure and total: no IO, no clock reads, no shared
+// state. Every transition is a function of the current session and one event,
+// which is what makes the duplicate/out-of-order/replay behaviour testable.
 
 const { AgentState, StateConfidence } = require('./state');
 const { HookEventKind, NotificationType, EventSource } = require('./events');
 
 const Outcome = Object.freeze({
+  // State moved. Notifications and HUD updates key off this.
   stateChanged: 'stateChanged',
+  // Event accepted and timestamps refreshed, but the state is the same.
   refreshed: 'refreshed',
+  // Arrived after a newer event for the same session; dropped.
   ignoredOutOfOrder: 'ignoredOutOfOrder',
+  // An event we have no mapping for. Deliberately a no-op.
   ignoredUnmapped: 'ignoredUnmapped',
+  // The session already ended; nothing can revive it.
   ignoredEnded: 'ignoredEnded',
 });
 
-// O estado que um evento implica, ou null se o evento nao carrega significado
-// de estado. Retornar null em vez de lancar erro e o que mantem a
-// compatibilidade pra frente: quando um agente adiciona um evento novo, a gente
-// ignora em vez de classificar errado.
+// The state an event implies, or null if the event carries no state meaning.
+//
+// Returning null rather than throwing is what keeps us forward compatible: when
+// an agent adds a new event, we ignore it instead of misclassifying it.
 function targetState(event) {
   switch (event.kind) {
     case HookEventKind.sessionStart:
-      // Sessao nova ou retomada esta aberta e ociosa, esperando um prompt.
+      // A fresh or resumed session is open and idle, waiting for a prompt.
       return AgentState.free;
 
     case HookEventKind.userPromptSubmit:
@@ -38,7 +43,7 @@ function targetState(event) {
       return AgentState.waitingForApproval;
 
     case HookEventKind.permissionDenied:
-      // O auto-deny ja aconteceu; o agente segue em frente.
+      // The auto-deny already happened; the agent carries on.
       return AgentState.busy;
 
     case HookEventKind.notification:
@@ -50,14 +55,14 @@ function targetState(event) {
       }
 
     case HookEventKind.stop:
-      // O *turno* acabou. A sessao continua aberta e contavel.
+      // The *turn* finished. The session stays open and countable.
       return AgentState.free;
 
     case HookEventKind.stopFailure:
       return AgentState.failed;
 
     case HookEventKind.subagentStop:
-      // Um subagente terminou; o turno principal continua rodando.
+      // A subagent finished; the main turn is still running.
       return AgentState.busy;
 
     case HookEventKind.sessionEnd:
@@ -74,8 +79,8 @@ function confidenceFor(event) {
     case EventSource.hook:
       return StateConfidence.high;
     case EventSource.process:
-      // Saida de processo e fato, nao inferencia - a unica coisa que a
-      // observacao de processo pode afirmar sobre estado.
+      // Process exit is a fact, not an inference — it is the one thing process
+      // observation may assert about state.
       return event.kind === HookEventKind.processExited
         ? StateConfidence.high
         : StateConfidence.low;
@@ -86,21 +91,22 @@ function confidenceFor(event) {
   }
 }
 
+// Human-readable cause, for the diagnostics screen. Never contains content.
 function reasonFor(event) {
   switch (event.kind) {
     case HookEventKind.notification:
       return `Notification(${event.notificationType || 'unknown'}) via ${event.source}`;
     case HookEventKind.processExited:
-      return 'Processo saiu sem SessionEnd';
+      return 'Process exited without SessionEnd';
     case HookEventKind.stopFailure:
-      return `Turno falhou (${event.errorType || 'unknown'})`;
+      return `Turn failed (${event.errorType || 'unknown'})`;
     default:
       return `${event.kind} via ${event.source}`;
   }
 }
 
-// Copia metadado que o evento carrega para a sessao, sem nunca sobrescrever um
-// valor conhecido com um ausente.
+// Copies metadata an event carries onto the session, without ever overwriting a
+// known value with a missing one.
 function applyEnrichment(event, session) {
   if (event.providerSessionID) session.providerSessionID = event.providerSessionID;
   if (event.providerTurnID) session.providerTurnID = event.providerTurnID;
@@ -118,11 +124,11 @@ function applyEnrichment(event, session) {
   }
 }
 
-// Aplica um evento a uma sessao. Muta `session` (o registry ja trabalha sobre
-// a sua propria copia) e devolve o desfecho.
+// Apply one event to one session. Mutates `session` (the registry already works
+// on its own copy) and returns the outcome.
 function reduce(session, event) {
-  // Nada revive uma sessao encerrada - nem um retardatario de antes do fim, nem
-  // um pid reciclado caindo na mesma identidade.
+  // Nothing revives an ended session — not a straggler from before it ended,
+  // and not a recycled pid landing on the same identity.
   if (session.state === AgentState.ended) {
     return { session, outcome: Outcome.ignoredEnded };
   }
@@ -156,6 +162,8 @@ function reduce(session, event) {
     sessionID: session.id,
     from,
     to: target,
+    // Idempotency key, inherited from the event that caused the change.
+    // Notifications key off this so one event can never notify twice.
     eventID: event.id,
     source: event.source,
     confidence: session.stateConfidence,

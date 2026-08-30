@@ -1,20 +1,20 @@
 'use strict';
 
-// Porte de Sources/CodeStatusCore/Domain/EventDeduplicator.swift
+// Port of Sources/CodeStatusCore/Domain/EventDeduplicator.swift
 //
-// Janela FIFO, nao LRU de verdade: eventos chegam como stream, entao o id mais
-// antigo e sempre o menos provavel de recorrer e a eviccao fica O(1).
-// E isso que garante "um som e uma notificacao por transicao".
+// A FIFO window, not a true LRU: events arrive as a stream, so the oldest id is
+// always the least likely to recur and eviction stays O(1). This is what
+// guarantees "one sound and one notification per transition".
 class EventDeduplicator {
   constructor(capacity = 4096) {
-    if (!(capacity > 0)) throw new Error('capacity deve ser positivo');
+    if (!(capacity > 0)) throw new Error('capacity must be positive');
     this.capacity = capacity;
     this.seen = new Set();
     this.order = [];
     this.head = 0;
   }
 
-  // Registra um id e diz se ele era inedito. false => descartar em silencio.
+  // Records an id and says whether it was new. false => drop it silently.
   admit(id) {
     if (this.seen.has(id)) return false;
     this.seen.add(id);
@@ -23,7 +23,7 @@ class EventDeduplicator {
       const evicted = this.order[this.head];
       this.head += 1;
       this.seen.delete(evicted);
-      // compacta de vez em quando para o array nao crescer sem limite
+      // Compact occasionally so the array does not grow without bound.
       if (this.head > this.capacity) {
         this.order = this.order.slice(this.head);
         this.head = 0;

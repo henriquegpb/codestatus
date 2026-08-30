@@ -1,26 +1,35 @@
 'use strict';
 
-// Gera os icones da bandeja em PNG para inspecao visual. Nao faz parte da suite:
-// existe para conferir com o olho o que o usuario vai ver no canto da tela.
+// Writes the tray icon to test/icons/ for every state, so the artwork can be
+// checked with an eye rather than an assertion. Whether a digit is legible at
+// this size is a judgement, and the only way to make it is to look.
+//
+//   npm run icons
 
 const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { buildIcon } = require('../src/ui/icon');
+
+const { buildIcon } = require('../src/ui/tray-icon');
+
+const OUT = path.join(__dirname, 'icons');
+
+const CASES = [
+  ['idle', { free: 0, busy: 0, needsYou: 0, indeterminate: 0 }],
+  ['free-1', { free: 1, busy: 0, needsYou: 0, indeterminate: 0 }],
+  ['free-3', { free: 3, busy: 0, needsYou: 0, indeterminate: 0 }],
+  ['busy-2', { free: 1, busy: 2, needsYou: 0, indeterminate: 0 }],
+  ['busy-8', { free: 0, busy: 8, needsYou: 0, indeterminate: 0 }],
+  ['needs-1', { free: 2, busy: 1, needsYou: 1, indeterminate: 0 }],
+  ['needs-5', { free: 0, busy: 0, needsYou: 5, indeterminate: 0 }],
+  ['overflow', { free: 0, busy: 0, needsYou: 12, indeterminate: 0 }],
+];
 
 app.whenReady().then(() => {
-  const cases = [
-    ['1-vazio', { free: 0, busy: 0, needsYou: 0, indeterminate: 0 }],
-    ['2-livre', { free: 2, busy: 0, needsYou: 0, indeterminate: 0 }],
-    ['3-trabalhando', { free: 1, busy: 3, needsYou: 0, indeterminate: 0 }],
-    ['4-precisa-de-voce', { free: 0, busy: 2, needsYou: 1, indeterminate: 0 }],
-    ['5-muitos', { free: 0, busy: 0, needsYou: 12, indeterminate: 0 }],
-  ];
-  const out = path.join(__dirname, 'icons');
-  fs.mkdirSync(out, { recursive: true });
-  for (const [name, counts] of cases) {
-    fs.writeFileSync(path.join(out, `${name}.png`), buildIcon(counts).toPNG());
+  fs.mkdirSync(OUT, { recursive: true });
+  for (const [name, counts] of CASES) {
+    fs.writeFileSync(path.join(OUT, `${name}.png`), buildIcon(counts).toPNG());
   }
-  console.log(`icones gerados em ${out}`);
+  console.log(`Wrote ${CASES.length} images to ${OUT}`);
   app.quit();
 });

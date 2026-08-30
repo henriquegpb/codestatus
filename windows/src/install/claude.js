@@ -1,36 +1,35 @@
 'use strict';
 
-// Porte de HookInstaller + ClaudeHookInstaller.
+// Port of HookInstaller + ClaudeHookInstaller.
 //
-// Tres garantias moldam tudo aqui:
+// Three guarantees shape everything here:
 //
-//  1. Nunca bloqueamos o agente. Toda entrada e escrita com async:true, que o
-//     Claude Code honra, entao nosso hook nunca senta no caminho critico dele
-//     mesmo que o daemon esteja travado.
-//  2. So tocamos nas nossas proprias entradas. A posse e decidida resolvendo o
-//     `command` da entrada para um caminho real e comparando com o script que
-//     controlamos - nunca por substring, que deixaria a gente apagar um hook do
-//     usuario cujo comando apenas menciona nosso nome.
-//  3. Nunca perdemos o arquivo do usuario. Backup, escrita atomica, revalidacao.
+//  1. We never block the agent. Every entry is written with async: true, which
+//     Claude Code honours, so our hook never sits on its critical path even if
+//     the daemon is wedged.
+//  2. We only ever touch our own entries. Ownership is decided by resolving the
+//     entry's script path to a real path and comparing it to the file we
+//     control — never by substring, which would let us delete a user's own hook
+//     whose command merely mentions our name.
+//  3. We never lose the user's file. Backup, atomic write, revalidate.
 //
-// Diferenca em relacao ao original: la o `command` aponta para um binario Swift
-// compilado. Aqui aponta para `node hook.js`, entao a deteccao de posse precisa
-// olhar o caminho do script dentro da linha de comando, nao a linha inteira.
+// Difference from macOS: there the `command` points at a compiled Swift binary.
+// Here it points at node.exe with the script in `args`, so ownership detection
+// has to look at the script path inside the invocation rather than at `command`.
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { execFileSync } = require('child_process');
 
-const { paths } = require('./paths');
+const { paths } = require('../platform/paths');
 
-// Todo hook de ciclo de vida que o Claude Code emite e que muda o que podemos
-// dizer sobre o estado de uma sessao.
+// Every lifecycle hook Claude Code emits that changes what we can say about a
+// session's state.
 //
-// `Notification` entra porque seus subtipos permission_prompt e idle_prompt sao
-// o unico sinal de "o agente esta esperando voce" que chega sem um evento de
-// ferramenta correspondente. `StopFailure` entra porque um turno que termina em
-// erro nao pode ser mostrado como livre.
+// `Notification` is included because its permission_prompt and idle_prompt
+// subtypes are the only signal for "the agent is waiting on you" that arrives
+// without a matching tool event. `StopFailure` is included because a turn that
+// ends in error must not be shown as free.
 const CLAUDE_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
@@ -44,36 +43,40 @@ const CLAUDE_EVENTS = [
   'SessionEnd',
 ];
 
-// Segundos que nos damos antes do agente desistir de nos. O hook e async, entao
-// isso e uma rede contra um processo travado, nao um orcamento de latencia.
+// Seconds we give ourselves before the agent gives up on us. The hook is async,
+// so this is a backstop against a wedged process, not a latency budget.
 const TIMEOUT_SECONDS = 5;
 
 const HOOK_SCRIPT = path.join(__dirname, '..', '..', 'hook', 'hook.js');
 
-// O node do PATH, resolvido na instalacao. Guardar o caminho absoluto evita que
-// a config do agente dependa de como o PATH esta montado no terminal dele - e
-// em Electron `process.execPath` e o electron.exe, nao o node.
+// The node on PATH, resolved at install time. Storing the absolute path keeps
+// the agent's config from depending on how PATH is set up in its terminal — and
+// under Electron process.execPath is electron.exe, not node.
+//
+// The environment override is a test seam: `where` only exists on Windows, and
+// the installer's behaviour is worth testing on any machine.
 function resolveNodePath() {
+  if (process.env.CODESTATUS_NODE_PATH) return process.env.CODESTATUS_NODE_PATH;
   try {
     const out = execFileSync('where', ['node'], { encoding: 'utf8' });
     const first = out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('node.exe'));
     if (first) return first.trim();
-  } catch { /* cai no fallback */ }
+  } catch { /* fall through */ }
   return 'node';
 }
 
-// O comando e os argumentos separados, nunca uma linha de comando unica.
+// The command and its arguments, kept separate — never one command line.
 //
-// Isto nao e estilo: e a diferenca entre funcionar e nao funcionar no Windows.
-// Quando `args` esta presente, o Claude Code usa a forma exec e spawna o binario
-// direto. Quando `args` e omitido, ele usa a forma shell - e no Windows esse
-// shell pode ser o PowerShell, onde uma linha que comeca com um caminho entre
-// aspas ("C:\...\node.exe" script.js) e apenas uma *string literal* que o
-// PowerShell ecoa. Sem o operador `&` nada executa, e o hook nunca roda: sem
-// erro, sem log, so silencio.
+// This is not style: it is the difference between working and not working on
+// Windows. When `args` is present, Claude Code uses the exec form and spawns
+// the binary directly. When `args` is omitted it uses the shell form — and on
+// Windows that shell can be PowerShell, where a line beginning with a quoted
+// path ("C:\...\node.exe" script.js) is merely a *string literal* that
+// PowerShell echoes. Without the `&` operator nothing executes, and the hook
+// never runs: no error, no log, just silence.
 //
-// A forma exec elimina o shell da equacao e, junto com ele, toda a questao de
-// aspas em caminhos com espaco (`C:\Program Files\...`).
+// The exec form removes the shell from the equation and, with it, the whole
+// question of quoting paths that contain spaces (C:\Program Files\...).
 function hookInvocation() {
   return {
     command: resolveNodePath(),
@@ -81,10 +84,10 @@ function hookInvocation() {
   };
 }
 
-// Uma entrada e nossa se ela referencia exatamente o nosso script - esteja o
-// caminho no `command` (formato antigo, linha unica) ou no `args` (formato
-// atual). Comparar caminho resolvido, nunca substring: um hook do usuario cuja
-// linha apenas mencione "codestatus" nao e nosso e precisa sobreviver.
+// An entry is ours if it references exactly our script — whether the path is in
+// `command` (the old single-line format) or in `args` (the current one).
+// Compare resolved paths, never substrings: a user's own hook whose line merely
+// mentions "codestatus" is not ours and has to survive.
 function isOurEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : [];
@@ -117,7 +120,7 @@ function newEntry() {
       command,
       args,
       timeout: TIMEOUT_SECONDS,
-      // Sem `async`, o hook roda no caminho critico do agente.
+      // Without `async`, the hook runs on the agent's critical path.
       async: true,
     }],
   };
@@ -128,9 +131,9 @@ function readSettings() {
     const text = fs.readFileSync(paths.claudeSettings, 'utf8');
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      // Algo esta no caminho alvo mas nao e um objeto de config - nao podemos
-      // saber o que substitui-lo destruiria.
-      throw new Error('settings.json nao contem um objeto JSON');
+      // Something is at the target path but is not a settings object — we
+      // cannot know what replacing it would destroy.
+      throw new Error('settings.json does not contain a JSON object');
     }
     return { settings: parsed, existed: true };
   } catch (err) {
@@ -158,8 +161,8 @@ function writeSettings(settings) {
   const text = `${JSON.stringify(settings, null, 2)}\n`;
   const tmp = `${paths.claudeSettings}.codestatus.tmp`;
   fs.writeFileSync(tmp, text, 'utf8');
-  // Revalida antes de publicar: nunca deixamos um arquivo ilegivel no lugar do
-  // que o usuario tinha.
+  // Revalidate before publishing: we never leave an unreadable file where the
+  // user's configuration used to be.
   JSON.parse(fs.readFileSync(tmp, 'utf8'));
   fs.renameSync(tmp, paths.claudeSettings);
 }
@@ -178,7 +181,7 @@ function saveReceipt(receipt) {
     const all = loadReceipts();
     all[receipt.targetPath] = receipt;
     fs.writeFileSync(paths.installReceipts, JSON.stringify(all, null, 2), 'utf8');
-  } catch { /* perder o recibo nao e fatal; ver uninstall */ }
+  } catch { /* losing the receipt is not fatal; see uninstall */ }
 }
 
 function forgetReceipt(targetPath) {
@@ -186,7 +189,7 @@ function forgetReceipt(targetPath) {
     const all = loadReceipts();
     delete all[targetPath];
     fs.writeFileSync(paths.installReceipts, JSON.stringify(all, null, 2), 'utf8');
-  } catch { /* ignora */ }
+  } catch { /* ignore */ }
 }
 
 function isInstalled() {
@@ -204,27 +207,27 @@ function isInstalled() {
 }
 
 function install() {
-  // Falha alto e cedo em vez de gravar uma entrada que nunca vai rodar. Sem um
-  // node no disco o hook e um comando que o Claude Code tenta executar e nao
-  // acha - e o sintoma disso e o pior possivel: silencio total, sem erro e sem
-  // nada no spool.
+  // Fail loudly and early rather than writing an entry that can never run.
+  // Without a node on disk the hook is a command Claude Code tries to execute
+  // and cannot find — and the symptom of that is the worst possible one: total
+  // silence, no error, nothing in the spool.
   if (!fs.existsSync(HOOK_SCRIPT)) {
-    throw new Error(`O script do hook nao existe em ${HOOK_SCRIPT}.`);
+    throw new Error(`The hook script does not exist at ${HOOK_SCRIPT}.`);
   }
   if (resolveNodePath() === 'node') {
     throw new Error(
-      'node.exe nao foi encontrado no PATH. O hook precisa do Node.js para rodar.\n'
-      + 'Instale em https://nodejs.org e tente de novo.',
+      'node.exe was not found on PATH. The hook needs Node.js to run.\n'
+      + 'Install it from https://nodejs.org and try again.',
     );
   }
 
   const { settings, existed } = readSettings();
   const backupPath = backup();
 
-  // O recibo responde uma pergunta que o arquivo em si nao consegue: a chave
-  // `hooks` existia antes de a gente chegar? Um usuario que escreveu "hooks": {}
-  // a mao e um arquivo onde nos criamos sao identicos depois que nossas
-  // entradas somem. Entao lembramos, em vez de adivinhar.
+  // The receipt answers a question the file itself cannot: did the `hooks` key
+  // exist before we arrived? A user who wrote "hooks": {} by hand and a file we
+  // created are identical once our entries are gone. So we remember instead of
+  // guessing.
   const receipt = {
     targetPath: paths.claudeSettings,
     createdFile: !existed,
@@ -245,8 +248,8 @@ function install() {
       settings.hooks[event] = [];
       receipt.createdEventKeys.push(event);
     }
-    // Remove qualquer entrada nossa antiga antes de adicionar a nova, senao uma
-    // reinstalacao dispararia o hook duas vezes por evento.
+    // Strip any older entry of ours before adding the new one, or reinstalling
+    // would fire the hook twice per event.
     settings.hooks[event] = settings.hooks[event].filter((e) => !isOurEntry(e));
     settings.hooks[event].push(newEntry());
   }
@@ -271,7 +274,7 @@ function uninstall() {
     settings.hooks[event] = arr.filter((e) => !isOurEntry(e));
     removed += before - settings.hooks[event].length;
 
-    // So removemos estrutura que provamos ter criado.
+    // We only remove structure we can prove we created.
     if (settings.hooks[event].length === 0
       && (receipt.createdEventKeys || []).includes(event)) {
       delete settings.hooks[event];
@@ -287,15 +290,15 @@ function uninstall() {
   return { removed };
 }
 
-// O que o app precisa mostrar no diagnostico.
+// What the app shows on the diagnostics screen.
 function status() {
   const problems = [];
   if (!fs.existsSync(HOOK_SCRIPT)) {
-    problems.push('O script do hook nao foi encontrado no disco.');
+    problems.push('The hook script was not found on disk.');
   }
   const node = resolveNodePath();
   if (node === 'node') {
-    problems.push('node.exe nao foi encontrado no PATH; os hooks dependem dele.');
+    problems.push('node.exe was not found on PATH; the hooks depend on it.');
   }
   return {
     installed: isInstalled(),

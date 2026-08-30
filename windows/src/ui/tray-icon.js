@@ -1,30 +1,32 @@
 'use strict';
 
-// Gera o icone da bandeja em tempo de execucao.
+// Draws the tray icon at runtime.
 //
-// Esta e a adaptacao mais visivel em relacao ao original. No macOS a barra de
-// menu aceita texto, entao o app escreve "3 ocupadas - 1 precisa de voce" e
-// pronto. A bandeja do Windows nao aceita texto nenhum: cabe um icone e um
-// tooltip. Entao a informacao precisa ser desenhada - um disco colorido pela
-// pior situacao presente, com a contagem por cima.
+// This is the most visible adaptation from the original. The macOS menu bar
+// accepts text, so the app writes "3 busy — 1 needs you" and is done. The
+// Windows tray accepts no text at all: one icon and a tooltip. So the
+// information has to be drawn — a disc coloured by the worst situation present,
+// with the count on top of it.
 //
-// O bitmap e montado a mao em BGRA porque `nativeImage.createFromBitmap` e a
-// unica rota do processo principal que nao exige uma janela pra rasterizar.
+// The bitmap is assembled by hand in BGRA because nativeImage.createFromBitmap
+// is the only route from the main process that does not need a window to
+// rasterise in.
 
 const { nativeImage } = require('electron');
 
 const SIZE = 32;
 
-// A cor responde a mesma pergunta que o app inteiro responde: preciso voltar la?
+// The colour answers the same question the whole app answers: do I need to go
+// back there?
 const COLORS = {
-  needsYou: [0xF5, 0x9E, 0x0B],   // ambar - alguem esta esperando por voce
-  busy: [0x38, 0x7A, 0xE8],       // azul - trabalhando
-  free: [0x2E, 0xA0, 0x43],       // verde - livre
-  idle: [0x8A, 0x8A, 0x8A],       // cinza - nenhuma sessao
+  needsYou: [0xF5, 0x9E, 0x0B], // amber — someone is waiting for you
+  busy: [0x38, 0x7A, 0xE8], // blue — working
+  free: [0x2E, 0xA0, 0x43], // green — free
+  idle: [0x8A, 0x8A, 0x8A], // grey — no sessions
 };
 
-// Fonte 3x5. Pequena o suficiente pra caber em 32px com folga e legivel depois
-// de escalada 3x.
+// A 3x5 font. Small enough to fit in 32px with room to spare, and legible once
+// scaled 3x.
 const GLYPHS = {
   0: ['111', '101', '101', '101', '111'],
   1: ['010', '110', '010', '010', '111'],
@@ -46,8 +48,6 @@ function blankBuffer() {
 function setPixel(buf, x, y, [r, g, b], alpha = 255) {
   if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return;
   const i = (y * SIZE + x) * 4;
-  // BGRA, pre-multiplicado nao e exigido aqui porque so usamos alpha 0 ou 255
-  // nas bordas suavizadas abaixo.
   const a = alpha / 255;
   buf[i] = Math.round(b * a);
   buf[i + 1] = Math.round(g * a);
@@ -64,8 +64,8 @@ function drawDisc(buf, color) {
       if (d <= radius - 1) {
         setPixel(buf, x, y, color, 255);
       } else if (d <= radius) {
-        // Uma borda de um pixel suavizada evita o serrilhado que faria o icone
-        // parecer quebrado ao lado dos icones nativos da bandeja.
+        // A one-pixel softened edge keeps the icon from looking broken beside
+        // the system's own tray icons.
         setPixel(buf, x, y, color, Math.round(255 * (radius - d)));
       }
     }
@@ -97,9 +97,9 @@ function drawGlyphs(buf, text, color) {
   });
 }
 
-// Qual numero o icone mostra e uma decisao editorial: o que precisa de voce
-// ganha de tudo, porque e a unica coisa que exige acao. Sem nada esperando,
-// mostramos quantas estao trabalhando.
+// Which number the icon shows is an editorial decision: what needs you beats
+// everything, because it is the only thing that demands action. With nothing
+// waiting, we show how many are working.
 function chooseDisplay(counts) {
   if (counts.needsYou > 0) return { value: counts.needsYou, color: COLORS.needsYou };
   if (counts.busy > 0) return { value: counts.busy, color: COLORS.busy };
@@ -114,23 +114,22 @@ function buildIcon(counts) {
   if (value > 0) {
     drawGlyphs(buf, value > 9 ? '+' : String(value), [255, 255, 255]);
   }
-  const image = nativeImage.createFromBitmap(buf, {
+  return nativeImage.createFromBitmap(buf, {
     width: SIZE,
     height: SIZE,
     scaleFactor: 2,
   });
-  return image;
 }
 
-// O tooltip carrega o texto que a barra de menu do macOS mostraria direto.
-function buildTooltip(counts, unreported) {
+// The tooltip carries the text the macOS menu bar would show outright.
+function buildTooltip(counts, unreportedCount) {
   const parts = [];
-  if (counts.needsYou > 0) parts.push(`${counts.needsYou} precisa de voce`);
-  if (counts.busy > 0) parts.push(`${counts.busy} trabalhando`);
-  if (counts.free > 0) parts.push(`${counts.free} livre${counts.free > 1 ? 's' : ''}`);
-  if (parts.length === 0) parts.push('Nenhuma sessao ativa');
-  if (unreported > 0) parts.push(`${unreported} sem hooks`);
-  return `CodeStatus - ${parts.join(', ')}`;
+  if (counts.needsYou > 0) parts.push(`${counts.needsYou} needs you`);
+  if (counts.busy > 0) parts.push(`${counts.busy} busy`);
+  if (counts.free > 0) parts.push(`${counts.free} free`);
+  if (parts.length === 0) parts.push('no active sessions');
+  if (unreportedCount > 0) parts.push(`${unreportedCount} without hooks`);
+  return `CodeStatus — ${parts.join(', ')}`;
 }
 
 module.exports = { buildIcon, buildTooltip, COLORS };

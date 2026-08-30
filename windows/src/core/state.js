@@ -1,11 +1,11 @@
 'use strict';
 
-// Porte de Sources/CodeStatusCore/Domain/AgentState.swift
+// Port of Sources/CodeStatusCore/Domain/AgentState.swift
 //
-// O vocabulario canonico do app inteiro. Nao existe isBusy/isDone/needsApproval
-// espalhado por ai: toda superficie (bandeja, HUD, notificacao) deriva o que
-// mostra daqui. Ausencia de evidencia e representada explicitamente
-// (unknown, reconnecting) em vez de chutada.
+// The canonical vocabulary for the whole app. There is no isBusy/isDone/
+// needsApproval scattered around: every surface (tray, HUD, notifications)
+// derives what it shows from here. Absence of evidence is represented
+// explicitly (unknown, reconnecting) rather than guessed.
 
 const AgentState = Object.freeze({
   discovering: 'discovering',
@@ -27,7 +27,7 @@ const StateBucket = Object.freeze({
   gone: 'gone',
 });
 
-// falha conta aqui - um erro nunca pode ser apresentado como "livre".
+// `failed` counts here — an error must never be presented as "free".
 function needsAttention(state) {
   return state === AgentState.waitingForApproval
     || state === AgentState.waitingForInput
@@ -38,14 +38,14 @@ function isActive(state) {
   return state !== AgentState.ended;
 }
 
-// Se uma transicao representa um turno que acabou de terminar.
+// Whether a transition represents a turn that just finished.
 //
-// Chegar em `free` nao basta: um SessionStart tambem chega em `free`, porque uma
-// sessao recem-aberta esta ociosa esperando um prompt. Avisar ali diria "terminou"
-// no exato momento em que nada comecou ainda.
+// Arriving at `free` is not enough: a SessionStart also arrives at `free`,
+// because a freshly opened session is idle waiting for a prompt. Announcing
+// there would say "finished" at the exact moment nothing has started.
 //
-// O que caracteriza a conclusao e a *origem*: so terminou o que estava em
-// andamento - trabalhando, ou parado esperando voce destravar.
+// What characterises completion is the *origin*: only something that was in
+// progress can finish — working, or stopped waiting for you to unblock it.
 function isTurnCompletion(from, to) {
   if (to !== AgentState.free) return false;
   return from === AgentState.busy
@@ -73,21 +73,40 @@ function bucketOf(state) {
   }
 }
 
-// Confianca decai com o silencio; o estado nao. Uma sessao quieta ha dez
-// minutos no meio de uma tool call continua busy - so a confianca cai.
+// Confidence decays with silence; the state does not. A session quiet for ten
+// minutes in the middle of a tool call is still busy — only the confidence drops.
 const StateConfidence = Object.freeze({ low: 0, medium: 1, high: 2 });
 
-const LABELS_PT = Object.freeze({
-  discovering: 'descobrindo',
-  busy: 'trabalhando',
-  free: 'livre',
-  waitingForApproval: 'aguardando aprovacao',
-  waitingForInput: 'aguardando resposta',
-  failed: 'falhou',
-  reconnecting: 'reconectando',
-  unknown: 'desconhecido',
-  ended: 'encerrada',
+// The same words the macOS app uses, so a screenshot of either reads the same.
+const LABELS = Object.freeze({
+  discovering: 'Discovering',
+  busy: 'Busy',
+  free: 'Free',
+  waitingForApproval: 'Needs approval',
+  waitingForInput: 'Needs a reply',
+  failed: 'Failed',
+  reconnecting: 'Reconnecting',
+  unknown: 'Unknown',
+  ended: 'Ended',
 });
+
+// How much a session wants the user, for list ordering. Mirrors the sort the
+// macOS popover applies: what needs you first, then work in progress.
+function displayPriority(state) {
+  switch (state) {
+    case AgentState.waitingForApproval:
+    case AgentState.waitingForInput:
+      return 5;
+    case AgentState.failed:
+      return 4;
+    case AgentState.busy:
+      return 3;
+    case AgentState.free:
+      return 2;
+    default:
+      return 1;
+  }
+}
 
 module.exports = {
   AgentState,
@@ -97,5 +116,6 @@ module.exports = {
   isActive,
   isTurnCompletion,
   bucketOf,
-  LABELS_PT,
+  displayPriority,
+  LABELS,
 };

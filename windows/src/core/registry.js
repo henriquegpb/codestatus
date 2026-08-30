@@ -1,12 +1,14 @@
 'use strict';
 
-// Porte de Sources/CodeStatusCore/Runtime/SessionRegistry.swift
+// Port of Sources/CodeStatusCore/Runtime/SessionRegistry.swift
 //
-// A unica fonte de verdade sobre quais sessoes existem e o que estao fazendo.
-// Bandeja, HUD, notificacoes e diagnostico leem daqui; nenhum deles mantem a
-// propria ideia de estado.
+// The single source of truth about which sessions exist and what they are
+// doing. Tray, HUD, notifications and diagnostics all read from here; none of
+// them keeps its own idea of state.
 
-const { AgentState, isActive, bucketOf, StateBucket } = require('./state');
+const {
+  AgentState, isActive, bucketOf, StateBucket, displayPriority,
+} = require('./state');
 const { HookEventKind, EventSource } = require('./events');
 const { EventDeduplicator } = require('./dedup');
 const { reduce, Outcome } = require('./reducer');
@@ -24,16 +26,16 @@ const DropReason = Object.freeze({
   unroutable: 'unroutable',
 });
 
-// Quanto tempo uma sessao encerrada permanece antes de ser removida, para o HUD
-// conseguir mostrar a transicao em vez de a linha sumir na hora.
+// How long an ended session lingers before removal, so the HUD can show the
+// transition instead of the row vanishing mid-glance.
 const ENDED_GRACE_MS = 8000;
 
 class SessionRegistry {
   constructor(dedupCapacity = 4096) {
     this.sessions = new Map();
     this.dedup = new EventDeduplicator(dedupCapacity);
-    // Roteia eventos que identificam a sessao so por processo, como saidas
-    // reportadas pelo observador de processos.
+    // Routes events that identify the session only by process, such as exits
+    // reported by the process watcher.
     this.pidIndex = new Map();
   }
 
@@ -45,13 +47,13 @@ class SessionRegistry {
     return this.sessions.get(id);
   }
 
-  // Sessoes que o HUD lista, ordenadas por quanto querem o usuario: primeiro as
-  // que precisam de atencao, depois as ocupadas, depois o resto.
+  // Sessions the HUD lists, ordered by how much they want the user: what needs
+  // attention first, then what is working, then the rest.
   //
-  // Somente sessoes sobre as quais um agente de fato reportou. Uma sessao achada
-  // varrendo processos prova que algo esta rodando; nao diz nada sobre o que
-  // esse algo esta fazendo, e lista-la como "desconhecido" pra sempre dilui a
-  // unica pergunta que o HUD existe pra responder.
+  // Only sessions an agent has actually reported on. A session found by
+  // scanning processes proves something is running; it says nothing about what
+  // that something is doing, and listing it as "unknown" forever dilutes the
+  // one question the HUD exists to answer.
   get visible() {
     return this.all
       .filter((s) => isActive(s.state) && s.hasHookEvidence)
@@ -63,10 +65,9 @@ class SessionRegistry {
       });
   }
 
-  // Sessoes vivas sobre as quais nenhum agente reportou ainda. Exposto como
-  // contagem em vez de escondido: omitir em silencio um agente rodando seria
-  // sua propria forma de desonestidade. Normalmente significa que os hooks
-  // foram instalados depois da sessao comecar.
+  // Live sessions no agent has reported on yet. Exposed as a count rather than
+  // hidden: silently omitting a running agent would be its own form of
+  // dishonesty. Usually it means hooks were installed after the session began.
   get unreported() {
     const reportingPIDs = new Set(
       this.all.filter((s) => s.hasHookEvidence && s.pid).map((s) => s.pid),
@@ -79,7 +80,9 @@ class SessionRegistry {
   }
 
   counts() {
-    const out = { free: 0, busy: 0, needsYou: 0, indeterminate: 0 };
+    const out = {
+      free: 0, busy: 0, needsYou: 0, indeterminate: 0,
+    };
     for (const s of this.visible) {
       const b = bucketOf(s.state);
       if (b !== StateBucket.gone) out[b] += 1;
@@ -87,7 +90,7 @@ class SessionRegistry {
     return out;
   }
 
-  // Aplica um evento. Devolve a lista de efeitos para o app reagir.
+  // Apply one event. Returns the list of effects for the app to react to.
   apply(event) {
     const effects = [];
 
@@ -105,8 +108,8 @@ class SessionRegistry {
     let session = this.sessions.get(id);
     let added = false;
     if (!session) {
-      // Um evento terminal para uma sessao que nunca vimos nao cria sessao -
-      // criar so pra marcar como encerrada faria linhas fantasma piscarem.
+      // A terminal event for a session we never saw does not create one —
+      // creating a session just to mark it ended would flash ghost rows.
       if (event.kind === HookEventKind.sessionEnd || event.kind === HookEventKind.processExited) {
         effects.push({ type: 'eventDropped', eventID: event.id, reason: DropReason.unroutable });
         return effects;
@@ -157,8 +160,8 @@ class SessionRegistry {
     return effects;
   }
 
-  // Identidade preferida e o session id do proprio agente; o pid so entra
-  // quando nao ha nenhum, como nas saidas detectadas pelo watcher.
+  // Preferred identity is the agent's own session id; the pid only comes into
+  // play when there is none, as with watcher-detected exits.
   routeToSessionID(event) {
     if (event.providerSessionID) {
       return sessionIDFromProvider(event.provider, event.providerSessionID);
@@ -167,8 +170,7 @@ class SessionRegistry {
       const known = this.pidIndex.get(event.pid);
       if (known) return known;
       if (event.source === EventSource.process) {
-        // Uma saida de processo que nao mapeia pra nenhuma sessao conhecida nao
-        // tem o que encerrar.
+        // A process exit that maps to no known session has nothing to end.
         return null;
       }
       return sessionIDFromProcess(event.provider, event.pid, event.processStartTime || 0);
@@ -176,7 +178,7 @@ class SessionRegistry {
     return null;
   }
 
-  // Remove sessoes encerradas depois do periodo de gracia.
+  // Removes ended sessions after the grace period.
   sweep(now = Date.now()) {
     const removed = [];
     for (const [id, s] of this.sessions) {
@@ -189,24 +191,13 @@ class SessionRegistry {
     return removed;
   }
 
-  // Snapshot serializavel para persistir entre reinicios do app.
+  // Serialisable snapshot, to persist across app restarts.
   toJSON() {
     return {
       version: 1,
       savedAt: Date.now(),
       sessions: this.all.map((s) => ({ ...s, clock: s.clock.toJSON() })),
     };
-  }
-}
-
-function displayPriority(state) {
-  switch (state) {
-    case AgentState.waitingForApproval: return 5;
-    case AgentState.waitingForInput: return 5;
-    case AgentState.failed: return 4;
-    case AgentState.busy: return 3;
-    case AgentState.free: return 2;
-    default: return 1;
   }
 }
 

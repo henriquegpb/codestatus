@@ -1,222 +1,223 @@
-# CodeStatus para Windows
+# CodeStatus for Windows
 
-Monitor de sessões do Claude Code que vive na bandeja do sistema. Porte do
-[henriquegpb/codestatus](https://github.com/henriquegpb/codestatus), que é um app
-nativo de macOS em Swift.
+Session monitor for Claude Code that lives in the system tray. A port of the
+macOS app at the root of this repository, which is native Swift.
 
-Ele responde uma pergunta só: **alguma sessão está esperando por mim?** O ícone
-da bandeja mostra a contagem, e você recebe uma notificação quando uma sessão
-passa a precisar de você.
+It answers one question: **is a session waiting for me?** The tray icon shows
+the count, and you get a notification when a session starts needing you.
 
-## Instalar em outro computador
+## Install
 
-**Pré-requisito:** Node.js 18+ ([nodejs.org](https://nodejs.org)). Não é só para
-montar o app — cada disparo de hook é um `node hook.js`, então sem Node o app
-sobe e fica eternamente vazio. O instalador confere e para com mensagem clara.
-
-Nesta máquina:
+**Prerequisite:** Node.js 18+ ([nodejs.org](https://nodejs.org)). Not only to
+assemble the app — every hook firing is a `node hook.js`, so without Node the
+app starts and stays permanently empty. The installer checks and stops with a
+clear message.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File empacotar.ps1
+cd windows
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-Gera um `CodeStatus.zip` de ~53 KB na área de trabalho (use `-Destino D:\pendrive`
-para mandar direto para outro lugar). No computador novo, descompacte e rode:
+Add `-StartWithWindows` to have it come up with Windows.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File instalar.ps1
-```
+The installer checks Node and Claude Code, fetches the dependencies, **runs the
+tests on the target machine**, and creates the Start Menu and desktop shortcuts.
+It does not touch your `settings.json` — connecting the hooks stays an explicit
+action, from the tray menu.
 
-Acrescente `-ComIniciarAutomatico` para que ele suba junto com o Windows.
+To hand the app to a machine without git, `scripts\package.ps1` produces a small
+zip of the source. `node_modules` is left out: it is ~370 MB, and the Electron
+binary is specific to platform and architecture, so copying it saves nothing and
+can break on the target.
 
-O instalador confere Node e Claude Code, baixa as dependências, **roda os testes
-na máquina de destino** e cria os atalhos no menu iniciar e na área de trabalho.
-Ele não toca no seu `settings.json` — conectar os hooks continua sendo uma ação
-explícita sua, pelo menu da bandeja.
+One thing the installer covers: `npm install` installs the electron *package*,
+but what downloads the binary is its postinstall, which fails often and lets npm
+carry on as though it had succeeded. The script checks and, if it is missing,
+runs `node node_modules/electron/install.js` by hand.
 
-### Por que o zip é tão pequeno
+Then:
 
-`node_modules` fica de fora: são ~370 MB, e o binário do Electron é específico de
-plataforma e arquitetura — copiá-lo não economiza nada e pode quebrar no destino.
-O código-fonte inteiro tem 160 KB.
+1. **Open the app** — double-click `CodeStatus.vbs`. It goes straight to the
+   tray, with no terminal window. A grey icon appears near the clock.
+2. **Connect Claude Code** — right-click the icon and choose *Connect Claude
+   Code*. That writes the hooks into your `~/.claude/settings.json`, with an
+   automatic backup.
+3. **Open a new Claude Code session.** Sessions that were already open will not
+   appear: Claude Code reads its hook configuration once, at session start.
 
-Um detalhe que o instalador cobre: o `npm install` instala o *pacote* electron,
-mas quem baixa o binário é o postinstall dele, que falha com frequência e deixa o
-npm seguir como se tivesse dado certo. O script confere e, se faltar, dispara
-`node node_modules/electron/install.js` na mão.
+If you need to see error messages, use `scripts\start.cmd` instead of the
+`.vbs` — same app, with the console visible.
 
-## Instalação (esta máquina)
+## Reading the icon
 
-Já está instalado em `C:\Users\ricar\CodeStatus`, com atalhos no menu iniciar e
-na área de trabalho. Para usar:
+macOS lets an app write text into the menu bar; the Windows tray does not, so
+the count is drawn inside the icon. The colour answers the same question the
+whole app answers:
 
-1. **Abrir o app** — dê duplo clique em `CodeStatus.vbs`. Ele sobe direto para a
-   bandeja, sem janela de terminal. Um ícone cinza aparece no canto da tela.
-2. **Conectar o Claude Code** — clique com o botão direito no ícone e escolha
-   *Conectar Claude Code*. Isso grava os hooks no seu `~/.claude/settings.json`
-   (com backup automático).
-3. **Abrir uma sessão nova** do Claude Code. Sessões que já estavam abertas não
-   aparecem: o Claude Code lê a configuração de hooks uma única vez, no início da
-   sessão.
-
-Para iniciar junto com o Windows, marque *Iniciar com o Windows* no mesmo menu.
-
-Se precisar ver mensagens de erro, use `iniciar.cmd` em vez do `.vbs` — é o mesmo
-app, com o console visível.
-
-## Como ler o ícone
-
-O macOS deixa escrever texto na barra de menu; a bandeja do Windows não, então a
-contagem é desenhada dentro do ícone. A cor responde a mesma pergunta que o app
-inteiro responde:
-
-| Cor | Significado |
+| Colour | Meaning |
 |---|---|
-| 🟠 âmbar | alguma sessão precisa de você (aprovação, resposta ou falha) |
-| 🔵 azul | sessões trabalhando |
-| 🟢 verde | sessões livres, esperando um prompt |
-| ⚪ cinza | nenhuma sessão ativa |
+| amber | a session needs you — approval, a reply, or a failure |
+| blue | sessions working |
+| green | sessions free, waiting for a prompt |
+| grey | no active sessions |
 
-O número é a contagem da situação mais urgente presente; `+` significa mais de 9.
-Passe o mouse para ver o texto completo, ou clique para abrir o painel.
+The number is the count of the most urgent situation present; `+` means more
+than nine. Hover for the full text, or click to open the panel.
 
-No painel, clicar numa sessão traz para frente a janela do terminal dela.
+In the panel, clicking a session brings its terminal window to the front.
 
-## Estados
+## States
 
-O vocabulário é o mesmo do original — é a lógica que impede o app de mentir sobre
-o que uma sessão está fazendo:
+The vocabulary is the original's — it is the logic that stops the app lying
+about what a session is doing:
 
-- **trabalhando** — recebeu um prompt: pensando, gerando ou rodando ferramentas
-- **livre** — o turno acabou e a sessão continua aberta, pronta para outro prompt
-- **aguardando aprovação** — travada esperando você aprovar uma ferramenta
-- **aguardando resposta** — travada esperando você responder algo
-- **falhou** — o turno terminou em erro (nunca é mostrado como "livre")
-- **reconectando** — o app reiniciou e o estado ainda não é confiável
+- **Busy** — has a prompt: thinking, generating, or running tools
+- **Free** — the turn ended and the session is still open, ready for another
+- **Needs approval** — blocked waiting for you to approve a tool
+- **Needs a reply** — blocked waiting for you to answer something
+- **Failed** — the turn ended in an error, and is never shown as free
+- **Reconnecting** — the app restarted and the state is not yet trustworthy
 
-Ausência de evidência é representada explicitamente, nunca chutada. Uma sessão
-quieta há dez minutos no meio de uma tool call continua *trabalhando* — só a
-confiança nesse estado cai. Tempo parado nunca muda o estado sozinho.
+Absence of evidence is represented explicitly, never guessed. A session quiet
+for ten minutes in the middle of a tool call is still *busy* — only the
+confidence in that drops. Elapsed time never changes a state on its own.
 
-## Notificações
+## Notifications
 
-Três interruptores no menu da bandeja, todos ligados por padrão:
+Three switches in the tray menu, all on by default:
 
-- **Avisar quando terminar** — toast quando um turno acaba, com o tempo que a
-  sessão levou (*"Terminou. 4min nesta sessão."*).
-- **Avisar quando precisar de você** — aprovação, resposta ou falha.
-- **Som nas notificações**.
+- **Tell me when a turn finishes** — a toast when a turn ends, with how long the
+  session took (*"Finished. 4m in this session."*).
+- **Tell me when a session needs me** — approval, a reply, or a failure.
+- **Play a sound.**
 
-Clicar na notificação traz a janela daquela sessão para frente.
+Clicking the notification brings that session's window to the front.
 
-O app original **não** avisa quando termina — ele só interrompe quando há algo a
-fazer. Aqui virou uma opção em vez de imposição, mas a decisão de projeto por
-trás importa: "chegou em livre" não é o mesmo que "terminou". Um `SessionStart`
-também chega em livre, porque uma sessão recém-aberta está ociosa esperando um
-prompt. Avisar ali diria *"terminou"* no exato instante em que nada começou.
+The original app does **not** announce completion — it interrupts only when
+there is something to do. Here it became an option rather than an imposition,
+but the design decision behind it matters: "arrived at free" is not the same as
+"finished". A `SessionStart` also arrives at free, because a freshly opened
+session is idle waiting for a prompt. Announcing there would say *"finished"* at
+the exact moment nothing has started.
 
-Por isso a regra olha a **origem** da transição, não o destino: só terminou o que
-estava em andamento (trabalhando, ou parado esperando você destravar). Um
-`reconnecting → free` depois de reiniciar o app também não conta. Há testes para
-cada um desses casos, incluindo um que percorre um turno inteiro e verifica que
-ele produz exatamente **uma** notificação, no `Stop`.
+So the rule looks at the **origin** of the transition, not the destination: only
+something that was in progress can finish — working, or stopped waiting for you
+to unblock it. A `reconnecting → free` after an app restart does not count
+either. There is a test for each of those cases, including one that walks a
+whole turn and checks it produces exactly **one** notification, at the `Stop`.
 
-As preferências ficam em `%LOCALAPPDATA%\CodeStatus\state\prefs.json`.
+Preferences live in `%LOCALAPPDATA%\CodeStatus\state\prefs.json`.
 
-## Privacidade
+## Privacy
 
-Todo o processamento é local. Não há servidor, telemetria ou rede.
+All processing is local. There is no server, no telemetry, and no network.
 
-O hook lê o payload que o Claude Code manda e extrai **apenas** uma allowlist de
-metadados (`session_id`, `hook_event_name`, `cwd`, `tool_name`, `model`, e
-poucos outros). Prompt, resposta, entrada e saída de ferramenta, mensagens e
-caminho do transcript nunca cruzam o transporte. Isso é testado: veja o caso
-"nenhum conteudo sensivel cruzou o transporte" em `test/transport.test.js`, que
-injeta conteúdo sensível de verdade e falha se qualquer parte dele vazar.
+The hook reads the payload Claude Code sends and extracts **only** an allowlist
+of metadata (`session_id`, `hook_event_name`, `cwd`, `tool_name`, `model`, and a
+few others). The prompt, the response, tool input and output, messages, and the
+transcript path never cross the transport. That is tested: see the case "no
+sensitive content crossed the transport" in `test/transport.test.js`, which
+injects real sensitive content and fails if any part of it leaks.
 
-## O que mudou em relação ao original
+## What changed from the original
 
-O núcleo — máquina de estados, ordenação de eventos, deduplicação, registro de
-sessões — é um porte fiel, com os mesmos invariantes e os mesmos testes. O que
-precisou mudar foi tudo que tocava o sistema operacional:
+The core — state machine, event ordering, deduplication, session registry — is a
+faithful port with the same invariants and the same tests. What had to change is
+everything that touched the operating system:
 
-| macOS (original) | Windows (aqui) |
+| macOS (original) | Windows (here) |
 |---|---|
 | Swift 6 + AppKit/SwiftUI | Node.js + Electron |
-| Socket de domínio Unix | Named pipe (`\\.\pipe\codestatus-<usuário>`) |
-| Binário `codestatus-hook` compilado | `hook/hook.js` invocado via `node` |
+| Unix domain socket | Named pipe (`\\.\pipe\codestatus-<user>`) |
+| Compiled `codestatus-hook` binary | `hook/hook.js` run through `node` |
 | `~/Library/Application Support/CodeStatus` | `%LOCALAPPDATA%\CodeStatus` |
-| Texto na barra de menu | Contagem desenhada no ícone da bandeja |
-| `TERM_PROGRAM` identifica o terminal | `WT_SESSION` / `VSCODE_INJECTION` |
-| AppleScript seleciona a aba exata | Traz a janela do processo para frente |
-| Saída de processo via kqueue | Verificação periódica do pid |
+| Text in the menu bar | Count drawn inside the tray icon |
+| `TERM_PROGRAM` names the terminal | `WT_SESSION` / `VSCODE_INJECTION` |
+| AppleScript selects the exact tab | Raises the window hosting the process |
+| Process exit via kqueue | Periodic pid check |
 
-Todo o mecanismo de `sun_path` do original desapareceu: named pipes vivem num
-namespace próprio e não têm limite de caminho, então o fallback para `/tmp` e a
-validação de diretório não têm equivalente aqui.
+The whole `sun_path` mechanism from the original is gone: named pipes live in
+their own namespace and have no path limit, so the `/tmp` fallback and the
+directory validation have no equivalent here.
 
-### A pegadinha que custou caro: forma exec vs forma shell
+### The gotcha that cost the most: exec form vs shell form
 
-A entrada de hook **precisa** usar `args`:
+The hook entry **must** use `args`:
 
 ```json
 {
   "type": "command",
   "command": "C:\\Program Files\\nodejs\\node.exe",
-  "args": ["C:\\Users\\ricar\\CodeStatus\\hook\\hook.js", "--provider", "claude-code"],
+  "args": ["C:\\Users\\you\\CodeStatus\\windows\\hook\\hook.js", "--provider", "claude-code"],
   "timeout": 5,
   "async": true
 }
 ```
 
-Quando `args` está presente, o Claude Code spawna o binário direto (forma exec).
-Quando é omitido, ele passa a linha por um shell — e no Windows esse shell pode
-ser o **PowerShell**, onde uma linha começando com um caminho entre aspas é
-apenas uma *string literal* que ele ecoa. Sem o operador `&`, nada executa.
+With `args` present, Claude Code spawns the binary directly. With it omitted, it
+passes the line through a shell — and on Windows that shell can be **PowerShell**,
+where a line starting with a quoted path is merely a *string literal* it echoes.
+Without the `&` operator, nothing runs. The first version of this port wrote one
+command line. The result: the hook never fired — no error, no log, nothing in
+the spool. Just silence. The exec form also disposes of quoting paths that
+contain spaces (`C:\Program Files`).
 
-A primeira versão daqui escrevia tudo numa linha só. Resultado: o hook nunca
-rodava — sem erro, sem log, sem nada no spool. Só silêncio. A forma exec também
-elimina de vez o problema de aspas em caminhos com espaço (`C:\Program Files`).
+There is a regression test for it, and the ownership detector recognises both
+formats so anyone who installed before the fix does not end up with duplicate
+entries firing the hook twice.
 
-Há um teste de regressão para isso (`A entrada usa a forma exec (args)`), e o
-detector de posse reconhece os dois formatos, para que quem instalou antes da
-correção não fique com entradas duplicadas disparando o hook duas vezes.
+**Codex is not ported.** The Codex installer in the original exists almost
+entirely to work around a path-parsing bug in Codex on macOS, which does not
+apply here. The hook already accepts `--provider codex` if it is ever wanted.
 
-**Codex não foi portado.** Você não tem o Codex instalado, e o instalador dele no
-original existe quase inteiro para contornar um bug de parsing de caminho do
-Codex no macOS, que não se aplica aqui. Se instalar o Codex depois, dá para
-adicionar — o hook já aceita `--provider codex`.
+**Known limitation:** Windows does not expose terminal tabs individually, not
+even in Windows Terminal. Clicking a session raises the *window* hosting the
+agent's process, walking up the process tree until one has a window. If none
+does, it opens the project folder.
 
-**Limitação conhecida:** o Windows não expõe abas de terminal individualmente,
-nem no Windows Terminal. Clicar numa sessão traz para frente a *janela* que
-hospeda o processo do agente, subindo a árvore de processos até achar uma com
-janela. Se nenhuma for encontrada, abre a pasta do projeto.
-
-## Testes
+## Layout
 
 ```
-npm test              # reducer + instalador + transporte (com o app FECHADO)
-npm run test:e2e      # contra o app RODANDO de verdade
+windows/
+├── hook/hook.js         the observer Claude Code invokes; no imports from src/
+├── src/
+│   ├── core/            platform-free: the state machine and everything it needs
+│   ├── platform/        the Windows seam: paths, pipe name, window focus
+│   ├── install/         writing and removing our hook entries
+│   ├── daemon/          the transport, the spool, liveness, persistence
+│   ├── ui/              tray icon and the panel
+│   └── main.js          the Electron main process, wiring the above together
+├── test/
+└── scripts/             install, package, and a console launcher for debugging
 ```
 
-`npm test` sobe o próprio daemon, então precisa que o app esteja fechado — só um
-processo pode segurar o named pipe. O `test:e2e` é o contrário: alimenta o app
-que já está rodando.
+`src/core/` has no Windows in it and no Electron in it. `src/platform/` is the
+part that does. That split is deliberate.
 
-- `test/reducer.test.js` — 19 casos portados de `StateReducerTests.swift`: os
-  invariantes da máquina de estados (um `PreToolUse` atrasado não tira a sessão
-  de "aguardando aprovação", nada revive uma sessão encerrada, um turno que
-  falhou nunca é contado como livre, replay é idempotente).
-- `test/installer.test.js` — 14 casos: instalar preserva as suas configurações e
-  hooks de terceiros, reinstalar não duplica, remover só tira o que é nosso, um
-  `settings.json` inválido para a instalação em vez de sobrescrever.
-- `test/transport.test.js` — integração real: sobe o daemon, invoca o hook como
-  o Claude Code invocaria, e confere estado, privacidade e o spool.
-- `test/render-icons.js` e `test/render-hud.js` — geram PNGs em `test/icons/`
-  para conferir o visual com o olho.
+## Tests
 
-## Desinstalar
+```powershell
+npm test           # everything; needs the app CLOSED
+npm run test:unit  # reducer and installer — runs on any OS, app or no app
+```
 
-No menu da bandeja: *Desconectar Claude Code* (remove os hooks do
-`settings.json`), depois *Sair*. Backups do seu `settings.json` ficam em
+`npm test` includes the transport suite, which starts its own daemon, so the app
+has to be closed: only one process can hold the named pipe.
+
+- `test/reducer.test.js` — the state machine's invariants, ported case for case
+  from `StateReducerTests.swift`. A late `PreToolUse` does not pull a session out
+  of "needs approval"; nothing revives an ended session; a failed turn is never
+  counted as free; replay is idempotent.
+- `test/installer.test.js` — installing preserves your settings and third-party
+  hooks, reinstalling does not duplicate, uninstalling removes only ours, an
+  invalid `settings.json` stops the install rather than overwriting it.
+- `test/transport.test.js` — real integration: starts the daemon, invokes the
+  hook the way Claude Code would, and checks state, privacy, and the spool.
+- `npm run icons` writes the tray artwork to `test/icons/` so it can be checked
+  by eye.
+
+## Uninstall
+
+From the tray menu: *Disconnect Claude Code* (removes the hooks from
+`settings.json`), then *Quit*. Backups of your `settings.json` stay in
 `%LOCALAPPDATA%\CodeStatus\backups`.
