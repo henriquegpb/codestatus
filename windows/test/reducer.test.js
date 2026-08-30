@@ -132,6 +132,53 @@ test('A late PostToolUse does not revive busy after Stop', () => {
   assert.strictEqual(s.state, AgentState.free);
 });
 
+// --- blocking on a question, not an approval --------------------------------
+
+test('AskUserQuestion blocks on a reply, not on approval', () => {
+  // The state is right that the session is blocked; calling it "needs approval"
+  // sends the user to review a command that does not exist.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.preToolUse, { turn: 't1', toolName: 'AskUserQuestion' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForInput);
+});
+
+test('ExitPlanMode blocks on a reply through the permission pipeline too', () => {
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1', toolName: 'ExitPlanMode' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForInput);
+});
+
+test('An ordinary tool still blocks on approval', () => {
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1', toolName: 'Bash' }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForApproval);
+});
+
+test('The whole real sequence of a blocked question stays a question', () => {
+  // 2.1.247 emits PreToolUse immediately, PermissionRequest about 3ms later,
+  // and Notification(permission_prompt) about six seconds after that. The last
+  // one carries no tool_name, and must not get to relabel the first two.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.preToolUse, { turn: 't1', toolName: 'AskUserQuestion' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1', toolName: 'AskUserQuestion' }),
+    ev(HookEventKind.notification, {
+      turn: 't1', notificationType: NotificationType.permissionPrompt,
+    }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForInput);
+});
+
 // --- tool failure and batches ----------------------------------------------
 
 test('A failing tool closes its tool use', () => {

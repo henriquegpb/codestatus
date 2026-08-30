@@ -58,6 +58,22 @@ const NotificationType = Object.freeze({
   idlePrompt: 'idle_prompt',
 });
 
+// Tools whose *call* is the question, rather than an action awaiting consent.
+//
+// Claude Code routes these through the ordinary permission pipeline: they
+// declare requiresUserInteraction(), which forces `behavior: "ask"` whatever
+// the permission mode says. Without this list they land on waitingForApproval,
+// which tells the user to go review a command that does not exist.
+//
+// Not exhaustive by construction: an MCP server can mark its own tools with
+// `anthropic/requiresUserInteraction`, and those names cannot be known here.
+// They keep landing on approval, which stays true enough — blocked is blocked.
+const TOOLS_THAT_ASK_THE_USER = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+function asksTheUser(event) {
+  return Boolean(event.toolName) && TOOLS_THAT_ASK_THE_USER.has(event.toolName);
+}
+
 const AgentProvider = Object.freeze({
   claudeCode: 'claudeCode',
   codex: 'codex',
@@ -152,8 +168,10 @@ module.exports = {
   HookEventKind,
   KNOWN_EVENT_KINDS,
   NotificationType,
+  TOOLS_THAT_ASK_THE_USER,
   AgentProvider,
   HostApplication,
+  asksTheUser,
   providerDisplayName,
   hostDisplayName,
   isTerminalEvent,

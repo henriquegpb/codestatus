@@ -7,7 +7,9 @@
 // which is what makes the duplicate/out-of-order/replay behaviour testable.
 
 const { AgentState, StateConfidence } = require('./state');
-const { HookEventKind, NotificationType, EventSource } = require('./events');
+const {
+  HookEventKind, NotificationType, EventSource, asksTheUser,
+} = require('./events');
 
 const Outcome = Object.freeze({
   // State moved. Notifications and HUD updates key off this.
@@ -36,7 +38,10 @@ function targetState(event) {
       return AgentState.busy;
 
     case HookEventKind.preToolUse:
-      return AgentState.busy;
+      // A question is not work in progress. AskUserQuestion and ExitPlanMode
+      // block here for exactly as long as the person takes to answer, so
+      // calling them busy hides the one moment the user most needs to see.
+      return asksTheUser(event) ? AgentState.waitingForInput : AgentState.busy;
 
     case HookEventKind.postToolUse:
     case HookEventKind.postToolUseFailure:
@@ -55,7 +60,7 @@ function targetState(event) {
       return AgentState.busy;
 
     case HookEventKind.permissionRequest:
-      return AgentState.waitingForApproval;
+      return asksTheUser(event) ? AgentState.waitingForInput : AgentState.waitingForApproval;
 
     case HookEventKind.permissionDenied:
       // The auto-deny already happened; the agent carries on.
