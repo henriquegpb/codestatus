@@ -86,9 +86,16 @@ function decodeLine(text) {
 }
 
 // Synthetic event used when the agent's process disappears without a SessionEnd.
-function processExitedEvent(pid, now = Date.now()) {
+//
+// `targetSessionID` addresses one specific session rather than routing by pid.
+// A single pid can carry two sessions — the one the process scan discovered and
+// the one its hooks later reported under the agent's own session id — and
+// routing by pid would only ever end the second, leaving the first alive in the
+// registry for the lifetime of the app.
+function processExitedEvent(pid, now = Date.now(), targetSessionID = null) {
   return {
-    id: `exit-${pid}-${now}`,
+    id: targetSessionID ? `exit-${targetSessionID}-${now}` : `exit-${pid}-${now}`,
+    targetSessionID,
     provider: AgentProvider.generic,
     kind: HookEventKind.processExited,
     source: EventSource.process,

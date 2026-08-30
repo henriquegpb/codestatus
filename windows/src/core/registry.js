@@ -202,6 +202,12 @@ class SessionRegistry {
   // Preferred identity is the agent's own session id; the pid only comes into
   // play when there is none, as with watcher-detected exits.
   routeToSessionID(event) {
+    // An event addressed at one session by name, which is how the liveness
+    // check ends exactly the session whose process died rather than whichever
+    // one the pid index happens to point at.
+    if (event.targetSessionID) {
+      return this.sessions.has(event.targetSessionID) ? event.targetSessionID : null;
+    }
     if (event.providerSessionID) {
       return sessionIDFromProvider(event.provider, event.providerSessionID);
     }

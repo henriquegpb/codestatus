@@ -465,6 +465,39 @@ test('A hook from a discovered pid stops it being counted as unreported', () => 
   assert.strictEqual(registry.visible.length, 1);
 });
 
+test('Both sessions behind one pid can be ended, not just the newer one', () => {
+  // A pid carries two identities: the one the scan discovered, and the one its
+  // hooks later reported under the agent's own session id. Routing an exit by
+  // pid only ever reaches the second, and the first would sit in the registry
+  // for the lifetime of the app. So the liveness check addresses each by name.
+  const registry = new SessionRegistry();
+  registry.observeProcess({
+    pid: 4242, provider: AgentProvider.claudeCode, startTime: 7, now: clockMs,
+  });
+  registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1', pid: 4242 }));
+
+  const ids = registry.all.map((s) => s.id);
+  assert.strictEqual(ids.length, 2, 'the same pid seen two ways');
+
+  for (const id of ids) {
+    registry.apply({
+      ...ev(HookEventKind.processExited, { source: EventSource.process, pid: 4242 }),
+      targetSessionID: id,
+    });
+  }
+  assert.ok(registry.all.every((s) => s.state === AgentState.ended), 'both should be ended');
+});
+
+test('An exit addressed at a session we never had is dropped', () => {
+  const registry = new SessionRegistry();
+  const effects = registry.apply({
+    ...ev(HookEventKind.processExited, { source: EventSource.process, pid: 1 }),
+    targetSessionID: 'claudeCode:ghost',
+  });
+  assert.strictEqual(effects[0].type, 'eventDropped');
+  assert.strictEqual(registry.all.length, 0, 'nothing is created just to mark it ended');
+});
+
 test('An ended session leaves the counts', () => {
   const registry = new SessionRegistry();
   registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1' }));

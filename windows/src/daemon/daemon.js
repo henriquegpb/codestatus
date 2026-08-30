@@ -197,10 +197,14 @@ class Daemon extends EventEmitter {
   // A session whose process disappeared without a SessionEnd has to leave the
   // counts.
   checkLiveness() {
+    const now = Date.now();
+    // Addressed per session, not per pid. One pid can carry two sessions — the
+    // one the scan discovered and the one its hooks reported — and ending only
+    // whichever the pid index points at would leave the other behind for good.
     for (const session of this.registry.all) {
       if (session.state === AgentState.ended || !session.pid) continue;
       if (!isAlive(session.pid)) {
-        this.applyEvent(processExitedEvent(session.pid));
+        this.applyEvent(processExitedEvent(session.pid, now, session.id));
       }
     }
   }
