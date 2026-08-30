@@ -67,6 +67,10 @@ function waitFor(predicate, timeoutMs = 5000) {
   } catch { /* does not exist yet */ }
 
   const daemon = new Daemon();
+  // The process scan shells out to PowerShell and is irrelevant here; leaving
+  // it on just makes the suite slower, and on CI it runs a WMI query per
+  // daemon for no reason at all.
+  daemon.scanEnabled = false;
 
   await new Promise((resolve) => {
     daemon.once('listening', resolve);
@@ -205,6 +209,7 @@ function waitFor(predicate, timeoutMs = 5000) {
   });
 
   const revived = new Daemon();
+  revived.scanEnabled = false;
   await new Promise((resolve) => { revived.once('listening', resolve); revived.start(); });
   await waitFor(() => revived.registry.get(`claudeCode:${offlineSession}`));
   check('on the way back, the daemon replays what the spool held', () => {
