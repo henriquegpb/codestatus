@@ -13,6 +13,7 @@
     "test:installer": "node test/installer.test.js",
     "test:platform": "node test/platform.test.js",
     "test:transport": "node test/transport.test.js",
+    "preview": "electron test/preview.js",
     "icons": "electron test/render-icons.js"
   },
   "devDependencies": {
