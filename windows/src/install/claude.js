@@ -14,15 +14,18 @@
 //  3. We never lose the user's file. Backup, atomic write, revalidate.
 //
 // Difference from macOS: there the `command` points at a compiled Swift binary.
-// Here it points at node.exe with the script in `args`, so ownership detection
-// has to look at the script path inside the invocation rather than at `command`.
+// Here it points at cmd.exe and the real work is in `args`, so ownership
+// detection has to look at the paths inside the invocation rather than at
+// `command` — which is a system binary anyone's hook may also use.
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 
 const { paths } = require('../platform/paths');
 const { AgentProvider } = require('../core/events');
+const {
+  resolveRuntime, resolveHookScript, shimPath, writeShim,
+} = require('../platform/runtime');
 
 // Every lifecycle hook Claude Code emits that changes what we can say about a
 // session's state. Kept in step with ClaudeHookInstaller.events on macOS.
@@ -62,51 +65,61 @@ const CLAUDE_EVENTS = [
 // so this is a backstop against a wedged process, not a latency budget.
 const TIMEOUT_SECONDS = 5;
 
-const HOOK_SCRIPT = path.join(__dirname, '..', '..', 'hook', 'hook.js');
-
-// The node on PATH, resolved at install time. Storing the absolute path keeps
-// the agent's config from depending on how PATH is set up in its terminal — and
-// under Electron process.execPath is electron.exe, not node.
-//
-// The environment override is a test seam: `where` only exists on Windows, and
-// the installer's behaviour is worth testing on any machine.
-function resolveNodePath() {
-  if (process.env.CODESTATUS_NODE_PATH) return process.env.CODESTATUS_NODE_PATH;
-  try {
-    const out = execFileSync('where', ['node'], { encoding: 'utf8' });
-    const first = out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('node.exe'));
-    if (first) return first.trim();
-  } catch { /* fall through */ }
-  return 'node';
+// The shell cmd.exe is invoked as, resolved from the environment so a machine
+// with Windows installed somewhere unusual still works.
+function comSpec() {
+  return process.env.CODESTATUS_COMSPEC || process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
 }
 
 // The command and its arguments, kept separate — never one command line.
 //
 // This is not style: it is the difference between working and not working on
-// Windows. When `args` is present, Claude Code uses the exec form and spawns
-// the binary directly. When `args` is omitted it uses the shell form — and on
-// Windows that shell can be PowerShell, where a line beginning with a quoted
-// path ("C:\...\node.exe" script.js) is merely a *string literal* that
-// PowerShell echoes. Without the `&` operator nothing executes, and the hook
-// never runs: no error, no log, just silence.
+// Windows. When `args` is present, Claude Code spawns `command` directly with
+// no shell involved. When `args` is omitted it passes the line through a shell
+// — and the documented default on Windows is PowerShell, where a line beginning
+// with a quoted path is merely a *string literal* that PowerShell echoes.
+// Without the `&` operator nothing executes, and the hook never runs: no error,
+// no log, just silence.
 //
-// The exec form removes the shell from the equation and, with it, the whole
-// question of quoting paths that contain spaces (C:\Program Files\...).
+// cmd.exe as the executable is not a return to the shell form. The argument
+// vector is ours, quoted by the spawn rather than by string concatenation, and
+// the file it runs is one we wrote. What it buys is the environment variable
+// the hook schema has no field for; see platform/runtime.js, which also
+// explains why nothing follows the shim path here.
 function hookInvocation() {
   return {
-    command: resolveNodePath(),
-    args: [HOOK_SCRIPT, '--provider', 'claude-code'],
+    command: comSpec(),
+    args: ['/d', '/c', shimPath('claude-code')],
   };
 }
 
-// An entry is ours if it references exactly our script — whether the path is in
-// `command` (the old single-line format) or in `args` (the current one).
-// Compare resolved paths, never substrings: a user's own hook whose line merely
-// mentions "codestatus" is not ours and has to survive.
+// Everything an entry of ours may point at, resolved and lower-cased.
+//
+// Two shapes are current and one is historical. `hook.js` appears in entries
+// written before the shim existed; they have to stay recognisable, or
+// reinstalling would leave them behind and the hook would fire twice per event.
+function ownedPaths() {
+  const owned = [shimPath('claude-code'), resolveHookScript()];
+  return new Set(owned.map((p) => {
+    try {
+      return path.resolve(p).toLowerCase();
+    } catch {
+      return null;
+    }
+  }).filter(Boolean));
+}
+
+// An entry is ours if it references one of those paths, wherever in the
+// invocation it appears. Compare resolved paths, never substrings: a user's own
+// hook whose line merely mentions "codestatus" is not ours and has to survive.
+//
+// `command` is checked too, because the historical format put the path there —
+// but cmd.exe never matches, so an unrelated hook that also runs through it is
+// safe.
 function isOurEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   const hooks = Array.isArray(entry.hooks) ? entry.hooks : [];
-  const target = path.resolve(HOOK_SCRIPT).toLowerCase();
+  const owned = ownedPaths();
 
   return hooks.some((h) => {
     if (!h || typeof h !== 'object') return false;
@@ -116,13 +129,19 @@ function isOurEntry(entry) {
       for (const a of h.args) if (typeof a === 'string') candidates.push(a);
     }
     return candidates.some((raw) => {
-      const match = raw.match(/"([^"]+\.js)"|(\S+\.js)/);
-      if (!match) return false;
-      try {
-        return path.resolve((match[1] || match[2]).trim()).toLowerCase() === target;
-      } catch {
-        return false;
-      }
+      // Whole argument first: that is the shape the exec form produces. The
+      // extraction is for the historical single-line command, where the path
+      // sits inside a longer string.
+      const forms = [raw.trim().replace(/^"|"$/g, '')];
+      const match = raw.match(/"([^"]+\.(?:js|cmd))"|(\S+\.(?:js|cmd))/);
+      if (match) forms.push((match[1] || match[2]).trim());
+      return forms.some((form) => {
+        try {
+          return owned.has(path.resolve(form).toLowerCase());
+        } catch {
+          return false;
+        }
+      });
     });
   });
 }
@@ -260,19 +279,24 @@ function hooksInstalledAt() {
 }
 
 function install() {
-  // Fail loudly and early rather than writing an entry that can never run.
-  // Without a node on disk the hook is a command Claude Code tries to execute
-  // and cannot find — and the symptom of that is the worst possible one: total
-  // silence, no error, nothing in the spool.
-  if (!fs.existsSync(HOOK_SCRIPT)) {
-    throw new Error(`The hook script does not exist at ${HOOK_SCRIPT}.`);
+  // Fail loudly and early rather than writing an entry that can never run. The
+  // symptom of a hook entry pointing at something absent is the worst possible
+  // one: total silence, no error, nothing in the spool.
+  const script = resolveHookScript();
+  if (!fs.existsSync(script)) {
+    throw new Error(`The hook script does not exist at ${script}.`);
   }
-  if (resolveNodePath() === 'node') {
+  const runtime = resolveRuntime();
+  if (!fs.existsSync(runtime)) {
     throw new Error(
-      'node.exe was not found on PATH. The hook needs Node.js to run.\n'
-      + 'Install it from https://nodejs.org and try again.',
+      `The JavaScript runtime for the hook was not found at ${runtime}.\n`
+      + 'If you are running from a source checkout, run npm install first.',
     );
   }
+
+  // Rewritten on every install: both paths inside it move when the app is
+  // updated or reinstalled somewhere else.
+  writeShim({ provider: 'claude-code', runtime, script });
 
   const { settings, existed } = readSettings();
   const backupPath = backup();
@@ -346,21 +370,23 @@ function uninstall() {
   return { removed };
 }
 
-// What the app shows on the diagnostics screen.
+// What the app shows on the settings screen.
 function status() {
   const problems = [];
-  if (!fs.existsSync(HOOK_SCRIPT)) {
+  const script = resolveHookScript();
+  const runtime = resolveRuntime();
+  if (!fs.existsSync(script)) {
     problems.push('The hook script was not found on disk.');
   }
-  const node = resolveNodePath();
-  if (node === 'node') {
-    problems.push('node.exe was not found on PATH; the hooks depend on it.');
+  if (!fs.existsSync(runtime)) {
+    problems.push('The JavaScript runtime for the hook was not found.');
   }
   return {
     installed: isInstalled(),
     settingsPath: paths.claudeSettings,
-    hookScript: HOOK_SCRIPT,
-    nodePath: node,
+    hookScript: script,
+    runtime,
+    shim: shimPath(),
     events: CLAUDE_EVENTS.length,
     problems,
   };
@@ -368,14 +394,12 @@ function status() {
 
 module.exports = {
   CLAUDE_EVENTS,
-  HOOK_SCRIPT,
   install,
   uninstall,
   isInstalled,
   status,
   isOurEntry,
   hookInvocation,
-  resolveNodePath,
   connectedProviders,
   hooksInstalledAt,
 };

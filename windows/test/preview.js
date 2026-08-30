@@ -111,8 +111,9 @@ const SETTINGS_STATE = {
   hooks: {
     installed: true,
     settingsPath: path.join(os.homedir(), '.claude', 'settings.json'),
-    hookScript: 'C:\\CodeStatus\\windows\\hook\\hook.js',
-    nodePath: 'C:\\Program Files\\nodejs\\node.exe',
+    hookScript: 'C:\\Program Files\\CodeStatus\\resources\\hook\\hook.js',
+    runtime: 'C:\\Program Files\\CodeStatus\\CodeStatus.exe',
+    shim: 'C:\\Users\\you\\AppData\\Local\\CodeStatus\\bin\\hook.cmd',
     events: 14,
     problems: [],
   },

@@ -13,6 +13,7 @@ const hookDetail = document.getElementById('hookDetail');
 const connectToggle = document.getElementById('connectToggle');
 const settingsPath = document.getElementById('settingsPath');
 const about = document.getElementById('about');
+const runtime = document.getElementById('runtime');
 
 let installed = false;
 
@@ -63,7 +64,8 @@ function render(state) {
   settingsPath.textContent = state.hooks.settingsPath;
   settingsPath.className = 'detail mono';
 
-  about.textContent = `CodeStatus for Windows ${state.version} · Node ${state.hooks.nodePath}`;
+  about.textContent = `CodeStatus for Windows ${state.version}`;
+  runtime.textContent = state.hooks.runtime;
 }
 
 window.codestatus.onState(render);

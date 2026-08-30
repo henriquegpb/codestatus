@@ -189,6 +189,11 @@ html[data-theme="light"] .toggle input:checked + .track .knob { background: #fff
 
 /* ------------------------------------------------------------------- about */
 
+.about .mono {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  word-break: break-all;
+}
+
 .about {
   margin-top: 24px;
   padding-top: 14px;

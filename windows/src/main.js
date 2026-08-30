@@ -42,6 +42,18 @@ const { focusProcessWindow } = require('./platform/focus');
 // clicking it goes nowhere.
 const APP_ID = 'com.codestatus.windows';
 
+// The Windows uninstaller runs this before deleting anything, so the hook
+// entries do not outlive the app they point at. Handled before anything else is
+// set up: there is no tray, no daemon and no window to build for it, and the
+// process has five seconds before the uninstaller stops waiting.
+if (process.argv.includes('--uninstall-hooks')) {
+  try {
+    // eslint-disable-next-line global-require
+    require('./install/claude').uninstall();
+  } catch { /* an uninstall must not fail because a JSON file was locked */ }
+  app.exit(0);
+}
+
 const HUD_WIDTH = 380;
 const HUD_MIN_HEIGHT = 120;
 const HUD_MAX_HEIGHT = 640;

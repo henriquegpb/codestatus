@@ -16,11 +16,21 @@ const path = require('path');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'codestatus-test-'));
 const SETTINGS = path.join(TMP, 'settings.json');
 process.env.CODESTATUS_CLAUDE_SETTINGS = SETTINGS;
-// The other test seam: `where node` only exists on Windows, and the installer's
-// behaviour is worth checking on whatever machine the developer is sitting at.
-process.env.CODESTATUS_NODE_PATH = process.env.CODESTATUS_NODE_PATH || process.execPath;
+// The other seams. The runtime and the script have to exist on disk for the
+// install to proceed, and cmd.exe does not exist off Windows — so the suite
+// points all three at real files it owns and checks the shape of what gets
+// written, which is the part that is platform-independent.
+const RUNTIME = process.execPath;
+const SCRIPT = path.join(TMP, 'hook.js');
+const COMSPEC = path.join(TMP, 'cmd.exe');
+fs.writeFileSync(SCRIPT, '// stand-in for hook.js\n');
+fs.writeFileSync(COMSPEC, '');
+process.env.CODESTATUS_HOOK_RUNTIME = RUNTIME;
+process.env.CODESTATUS_HOOK_SCRIPT = SCRIPT;
+process.env.CODESTATUS_COMSPEC = COMSPEC;
 
 const installer = require('../src/install/claude');
+const { shimPath } = require('../src/platform/runtime');
 
 const { CLAUDE_EVENTS } = installer;
 
@@ -192,14 +202,50 @@ test('Installing leaves a backup behind', () => {
   assert.strictEqual(JSON.parse(fs.readFileSync(receipt.backupPath, 'utf8')).model, 'opus');
 });
 
-test('The written command points at a real node and at our hook', () => {
+test('The written command runs our shim, and the shim runs our hook', () => {
   write({});
   installer.install();
   const h = read().hooks.SessionStart[0].hooks[0];
-  assert.strictEqual(h.command, installer.resolveNodePath());
-  assert.notStrictEqual(h.command, 'node', 'the absolute path should have been resolved');
-  assert.ok(h.args.some((a) => a.endsWith('hook.js')), 'args should point at hook.js');
-  assert.deepStrictEqual(h.args.slice(-2), ['--provider', 'claude-code']);
+  assert.deepStrictEqual(h.command, COMSPEC);
+  assert.deepStrictEqual(h.args, ['/d', '/c', shimPath('claude-code')]);
+
+  const shim = fs.readFileSync(shimPath('claude-code'), 'utf8');
+  assert.ok(shim.includes('set ELECTRON_RUN_AS_NODE=1'), 'the shim must set the variable');
+  assert.ok(shim.includes(RUNTIME), 'the shim must call the resolved runtime');
+  assert.ok(shim.includes(SCRIPT), 'the shim must run hook.js');
+  assert.ok(shim.includes('--provider claude-code'), 'the provider belongs in the shim');
+});
+
+test('Nothing follows the shim path in the argument vector', () => {
+  // `cmd /c` preserves the quotes around an executable path only when nothing
+  // comes after the closing quote. Add an argument and it strips them instead,
+  // and a user whose profile folder contains a space — which Windows allows —
+  // gets a hook that tries to run C:\Users\John. The provider flag lives in
+  // the shim for exactly this reason, and this is the case that says so.
+  write({});
+  installer.install();
+  const h = read().hooks.SessionStart[0].hooks[0];
+  assert.strictEqual(h.args.length, 3, `expected /d /c <shim>, got ${h.args.join(' ')}`);
+  assert.strictEqual(h.args[h.args.length - 1], shimPath('claude-code'));
+});
+
+test('The shim is rewritten on every install, because the paths move', () => {
+  write({});
+  installer.install();
+  fs.writeFileSync(shimPath('claude-code'), 'stale\r\n');
+  installer.install();
+  assert.ok(fs.readFileSync(shimPath('claude-code'), 'utf8').includes('ELECTRON_RUN_AS_NODE'));
+});
+
+test('Installing refuses when the runtime is missing', () => {
+  // Better to stop here than to write an entry whose only symptom is silence.
+  write({});
+  process.env.CODESTATUS_HOOK_RUNTIME = path.join(TMP, 'does-not-exist.exe');
+  try {
+    assert.throws(() => installer.install(), /runtime/i);
+  } finally {
+    process.env.CODESTATUS_HOOK_RUNTIME = RUNTIME;
+  }
 });
 
 // Regression. The first version of this port wrote everything as one command
@@ -218,19 +264,42 @@ test('The entry uses the exec form (args), never a single command line', () => {
   }
 });
 
-test('An entry in the old single-line format is still recognised as ours', () => {
-  // Anyone who installed before that fix has the single-line entry. It has to
-  // stay recognisable, or reinstalling would leave it behind and the hook would
-  // fire twice per event.
-  const old = {
+test('Both older entry formats are still recognised as ours', () => {
+  // Anyone who installed before a given fix still has that shape in their file.
+  // Each has to stay recognisable, or reinstalling would leave it behind and
+  // the hook would fire twice per event.
+  const singleLine = {
     hooks: [{
       type: 'command',
-      command: `"C:\\node.exe" "${installer.HOOK_SCRIPT}" --provider claude-code`,
+      command: `"C:\\node.exe" "${SCRIPT}" --provider claude-code`,
       timeout: 5,
       async: true,
     }],
   };
-  assert.strictEqual(installer.isOurEntry(old), true);
+  const nodeExecForm = {
+    hooks: [{
+      type: 'command',
+      command: 'C:\\Program Files\\nodejs\\node.exe',
+      args: [SCRIPT, '--provider', 'claude-code'],
+      timeout: 5,
+      async: true,
+    }],
+  };
+  assert.strictEqual(installer.isOurEntry(singleLine), true, 'single line');
+  assert.strictEqual(installer.isOurEntry(nodeExecForm), true, 'node exec form');
+});
+
+test('A third-party hook that also runs through cmd.exe is not ours', () => {
+  // cmd.exe is now our `command`, and it is a system binary anyone may use.
+  // Ownership has to rest on the paths inside the invocation, never on that.
+  const theirs = {
+    hooks: [{
+      type: 'command',
+      command: COMSPEC,
+      args: ['/d', '/c', 'C:\\tools\\their-hook.cmd'],
+    }],
+  };
+  assert.strictEqual(installer.isOurEntry(theirs), false);
 });
 
 // --- run --------------------------------------------------------------------

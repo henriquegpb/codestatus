@@ -26,6 +26,10 @@ const base = process.env.LOCALAPPDATA
   : path.join(home, 'AppData', 'Local', 'CodeStatus');
 
 const run = path.join(base, 'run');
+// Small files we generate and the agent then executes — currently the hook
+// shim. Kept in app data rather than beside the app: always writable, and its
+// path does not move when the app is updated.
+const bin = path.join(base, 'bin');
 const backups = path.join(base, 'backups');
 const state = path.join(base, 'state');
 const spool = path.join(run, 'spool');
@@ -34,6 +38,7 @@ const paths = {
   home,
   base,
   run,
+  bin,
   backups,
   state,
   spool,
@@ -56,7 +61,7 @@ const paths = {
 };
 
 function createDirectories() {
-  for (const dir of [base, run, backups, state, spool]) {
+  for (const dir of [base, run, bin, backups, state, spool]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
