@@ -133,6 +133,7 @@ function applyEnrichment(event, session) {
   if (event.pid) session.pid = event.pid;
   if (event.model) session.model = event.model;
   if (event.permissionMode) session.permissionMode = event.permissionMode;
+  if (event.processStartTime) session.processStartTime = event.processStartTime;
 
   if (event.host && event.host !== 'unknown') {
     session.hostApplication = event.host;

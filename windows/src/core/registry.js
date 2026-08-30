@@ -68,6 +68,10 @@ class SessionRegistry {
   // Live sessions no agent has reported on yet. Exposed as a count rather than
   // hidden: silently omitting a running agent would be its own form of
   // dishonesty. Usually it means hooks were installed after the session began.
+  //
+  // A process-discovered session is suppressed as soon as a hook arrives from
+  // the same pid — at that point the two rows are the same session seen twice,
+  // once by identity and once by process.
   get unreported() {
     const reportingPIDs = new Set(
       this.all.filter((s) => s.hasHookEvidence && s.pid).map((s) => s.pid),
@@ -158,6 +162,41 @@ class SessionRegistry {
     }
 
     return effects;
+  }
+
+  // Records that an agent process exists, without claiming anything about what
+  // it is doing. The counterpart to macOS's ProcessWatcher: it is what lets the
+  // app say "something is running and not reporting" instead of showing an
+  // empty popover and leaving the user to guess.
+  //
+  // Idempotent, because the scan re-reports the same pids every time it runs.
+  observeProcess({
+    pid, provider, startTime, cwd, now = Date.now(),
+  }) {
+    if (!pid) return null;
+
+    const existing = this.pidIndex.get(pid);
+    if (existing && this.sessions.has(existing)) return null;
+
+    const id = sessionIDFromProcess(provider, pid, startTime);
+    if (this.sessions.has(id)) return null;
+
+    const session = makeSession({
+      id,
+      provider,
+      now,
+      sourceAdapter: EventSource.process,
+      // Discovering, never `unknown`: we have not failed to determine the
+      // state, we have not been told one yet.
+      state: AgentState.discovering,
+    });
+    session.pid = pid;
+    session.processStartTime = startTime || null;
+    if (cwd) session.cwd = cwd;
+
+    this.sessions.set(id, session);
+    this.pidIndex.set(pid, id);
+    return id;
   }
 
   // Preferred identity is the agent's own session id; the pid only comes into

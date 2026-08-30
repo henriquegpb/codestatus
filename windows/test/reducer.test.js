@@ -435,6 +435,36 @@ test('Only sessions with hook evidence enter the counts', () => {
   assert.strictEqual(registry.unreported.length, 0);
 });
 
+test('A discovered process counts as unreported, never as a session', () => {
+  const registry = new SessionRegistry();
+  registry.observeProcess({
+    pid: 9001, provider: AgentProvider.claudeCode, startTime: 1, now: clockMs,
+  });
+  assert.strictEqual(registry.unreported.length, 1);
+  assert.strictEqual(registry.visible.length, 0, 'we know it exists, not what it is doing');
+});
+
+test('Observing the same process twice adds one session', () => {
+  const registry = new SessionRegistry();
+  const args = {
+    pid: 9002, provider: AgentProvider.claudeCode, startTime: 1, now: clockMs,
+  };
+  registry.observeProcess(args);
+  registry.observeProcess(args);
+  assert.strictEqual(registry.unreported.length, 1);
+});
+
+test('A hook from a discovered pid stops it being counted as unreported', () => {
+  const registry = new SessionRegistry();
+  registry.observeProcess({
+    pid: 4242, provider: AgentProvider.claudeCode, startTime: 1, now: clockMs,
+  });
+  assert.strictEqual(registry.unreported.length, 1);
+  registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1', pid: 4242 }));
+  assert.strictEqual(registry.unreported.length, 0, 'same session, seen twice');
+  assert.strictEqual(registry.visible.length, 1);
+});
+
 test('An ended session leaves the counts', () => {
   const registry = new SessionRegistry();
   registry.apply(ev(HookEventKind.userPromptSubmit, { turn: 't1' }));

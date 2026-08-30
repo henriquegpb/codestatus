@@ -14,6 +14,7 @@ const { EventEmitter } = require('events');
 
 const { paths, createDirectories } = require('../platform/paths');
 const { pipeName } = require('../platform/transport');
+const { scan } = require('../platform/process-scan');
 const { SessionRegistry } = require('../core/registry');
 const { decodeLine, processExitedEvent } = require('./decoder');
 const { LogicalClock } = require('../core/clock');
@@ -23,6 +24,11 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const SPOOL_DRAIN_INTERVAL_MS = 2 * 1000;
 const LIVENESS_INTERVAL_MS = 5 * 1000;
 const SWEEP_INTERVAL_MS = 4 * 1000;
+// Slow on purpose: the scan shells out to PowerShell and costs a few hundred
+// milliseconds. Nothing time-critical depends on it — hooks arrive over the
+// pipe regardless — so it only has to be fast enough to explain a silent agent
+// before the user gives up on the app.
+const PROCESS_SCAN_INTERVAL_MS = 20 * 1000;
 const PERSIST_DEBOUNCE_MS = 1500;
 const MAX_LINE_BYTES = 64 * 1024;
 
@@ -46,6 +52,9 @@ class Daemon extends EventEmitter {
     this.timers = [];
     this.persistTimer = null;
     this.pipe = pipeName();
+    this.scanning = false;
+    this.scanEnabled = true;
+    this.lastScanFailed = false;
   }
 
   start() {
@@ -58,9 +67,11 @@ class Daemon extends EventEmitter {
     this.timers.push(setInterval(() => this.drainSpool(), SPOOL_DRAIN_INTERVAL_MS));
     this.timers.push(setInterval(() => this.checkLiveness(), LIVENESS_INTERVAL_MS));
     this.timers.push(setInterval(() => this.sweep(), SWEEP_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.scanForAgents(), PROCESS_SCAN_INTERVAL_MS));
 
     // Events that arrived while the app was closed.
     this.drainSpool();
+    this.scanForAgents();
   }
 
   stop() {
@@ -190,6 +201,39 @@ class Daemon extends EventEmitter {
     }
   }
 
+  // MARK: - Process discovery
+
+  // Finds agents that are running and have never reported.
+  //
+  // Guarded against overlap: the scan is slower than nothing, and two of them
+  // racing would double the cost for no new information.
+  async scanForAgents() {
+    if (this.scanning || !this.scanEnabled) return;
+    this.scanning = true;
+    try {
+      const { agents, failed } = await scan();
+      this.lastScanFailed = failed;
+      if (failed) return;
+
+      let changed = false;
+      for (const agent of agents) {
+        if (this.registry.observeProcess(agent)) changed = true;
+      }
+
+      if (changed) {
+        this.emit('effects', [{ type: 'processesScanned' }], this.snapshot());
+        this.schedulePersist();
+      }
+    } finally {
+      this.scanning = false;
+    }
+  }
+
+  setScanEnabled(enabled) {
+    this.scanEnabled = Boolean(enabled);
+    if (this.scanEnabled) this.scanForAgents();
+  }
+
   // MARK: - Persistence
 
   schedulePersist() {
@@ -237,6 +281,7 @@ class Daemon extends EventEmitter {
       counts: this.registry.counts(),
       sessions: this.registry.visible,
       unreportedCount: this.registry.unreported.length,
+      scanFailed: this.lastScanFailed,
     };
   }
 }
