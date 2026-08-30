@@ -146,6 +146,46 @@ test('Notification subtypes map to distinct states', () => {
   }
 });
 
+test('idle_prompt still lands after the turn has finished', () => {
+  // It means the prompt has been sitting untouched, so it has to outrank Stop.
+  // Ranked below it, it was rejected by every session that could produce it —
+  // which is every session that has finished a turn.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.stop, { turn: 't1' }),
+    ev(HookEventKind.notification, { turn: 't1', notificationType: NotificationType.idlePrompt }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForInput);
+});
+
+test('permission_prompt is still the backstop when PermissionRequest never came', () => {
+  // Ranking it low must not disable it: when the hook was never delivered, this
+  // notification is the only evidence that the session is blocked at all.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.notification, {
+      turn: 't1', notificationType: NotificationType.permissionPrompt,
+    }),
+  ]);
+  assert.strictEqual(s.state, AgentState.waitingForApproval);
+});
+
+test('A late permission_prompt does not override the request it repeats', () => {
+  // Six seconds after PermissionRequest, and without the tool_name that came
+  // with it. Rejected as the straggler it is.
+  const s = newSession();
+  apply(s, [
+    ev(HookEventKind.userPromptSubmit, { turn: 't1' }),
+    ev(HookEventKind.permissionRequest, { turn: 't1', toolName: 'Bash' }),
+  ]);
+  const outcomes = apply(s, [ev(HookEventKind.notification, {
+    turn: 't1', notificationType: NotificationType.permissionPrompt,
+  })]);
+  assert.strictEqual(outcomes[0], Outcome.ignoredOutOfOrder);
+});
+
 test('agent_completed is ignored — it is about a different session', () => {
   // The fleet-view watcher raises it when *some other* agent changes band.
   // Acting on it marks this session free because a different one finished.

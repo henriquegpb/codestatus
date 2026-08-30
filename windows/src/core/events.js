@@ -102,8 +102,18 @@ function rankOf(event) {
     case HookEventKind.permissionDenied: return 3;
     case HookEventKind.notification:
       switch (event.notificationType) {
-        case NotificationType.permissionPrompt:
-        case NotificationType.idlePrompt: return 3;
+        // permission_prompt is the same fact as PermissionRequest, announced
+        // about six seconds later and without the tool_name that tells a
+        // question apart from an approval. Ranking it just below
+        // permissionRequest keeps it in its proper role — the backstop that
+        // fires when that hook was never delivered — instead of arriving late
+        // to relabel a question as an approval.
+        case NotificationType.permissionPrompt: return 2;
+        // idle_prompt means the turn is long over and the prompt has been
+        // sitting untouched, so it has to outrank stop. At rank 3 it was
+        // rejected by every session that had actually finished a turn, which is
+        // every session that can produce it.
+        case NotificationType.idlePrompt: return 9;
         default: return 3;
       }
     case HookEventKind.postToolUse: return 4;
