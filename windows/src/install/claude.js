@@ -207,18 +207,37 @@ function forgetReceipt(targetPath) {
   } catch { /* ignore */ }
 }
 
+// Answering this means reading and parsing the user's settings.json, and the
+// daemon asks on every snapshot — which is every hook event. A short cache
+// keeps a busy turn from re-reading the file a dozen times a second, and is
+// short enough that editing the file by hand still shows up promptly.
+const INSTALLED_CACHE_MS = 5000;
+let installedCache = { value: null, at: 0 };
+
+function invalidateInstalledCache() {
+  installedCache = { value: null, at: 0 };
+}
+
 function isInstalled() {
+  const now = Date.now();
+  if (installedCache.value !== null && now - installedCache.at < INSTALLED_CACHE_MS) {
+    return installedCache.value;
+  }
+
+  let value;
   try {
     const { settings } = readSettings();
     const hooks = settings.hooks;
-    if (!hooks || typeof hooks !== 'object') return false;
-    return CLAUDE_EVENTS.every((event) => {
+    value = Boolean(hooks) && typeof hooks === 'object' && CLAUDE_EVENTS.every((event) => {
       const arr = hooks[event];
       return Array.isArray(arr) && arr.some(isOurEntry);
     });
   } catch {
-    return false;
+    value = false;
   }
+
+  installedCache = { value, at: now };
+  return value;
 }
 
 // Providers whose hook entries are in their config file right now. What the
@@ -291,6 +310,7 @@ function install() {
 
   writeSettings(settings);
   saveReceipt(receipt);
+  invalidateInstalledCache();
   return receipt;
 }
 
@@ -322,6 +342,7 @@ function uninstall() {
 
   writeSettings(settings);
   forgetReceipt(paths.claudeSettings);
+  invalidateInstalledCache();
   return { removed };
 }
 
@@ -340,6 +361,7 @@ function status() {
     settingsPath: paths.claudeSettings,
     hookScript: HOOK_SCRIPT,
     nodePath: node,
+    events: CLAUDE_EVENTS.length,
     problems,
   };
 }
