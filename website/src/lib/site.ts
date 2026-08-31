@@ -24,11 +24,13 @@ export const SITE = {
   downloads: {
     macos: {
       label: "Download for macOS",
+      icon: "/Apple.svg",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg",
       requirements: "macOS 14 or later",
     },
     windows: {
       label: "Download for Windows",
+      icon: "/Windows.svg",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe",
       /**
        * Windows on Arm gets its own installer rather than being served an x64

@@ -2,9 +2,9 @@
 
 import Image from "next/image";
 import { useSyncExternalStore } from "react";
-import { Download } from "lucide-react";
 import githubMark from "../../public/GitHub.svg";
 import { IconSwapButton } from "@/components/icon-swap-button";
+import { PlatformIcon } from "@/components/platform-icon";
 import { SITE, type Platform } from "@/lib/site";
 
 /**
@@ -60,6 +60,10 @@ export function DownloadButtons({
 
   const isWindows = platform === "windows";
   const { macos, windows } = SITE.downloads;
+  // The visitor's own platform leads; the other follows. A third entry here is
+  // all Linux will need, the day there is a Linux build.
+  const mine = isWindows ? windows : macos;
+  const other = isWindows ? macos : windows;
 
   return (
     <div className={align === "center" ? "flex flex-col items-center" : ""}>
@@ -69,15 +73,15 @@ export function DownloadButtons({
         }`}
       >
         <IconSwapButton
-          href={isWindows ? windows.url : macos.url}
-          label={isWindows ? windows.label : macos.label}
+          href={mine.url}
+          label={mine.label}
           variant="primary"
-          icon={<Download className="size-4" strokeWidth={2} />}
+          icon={<PlatformIcon src={mine.icon} />}
         />
         <IconSwapButton
-          href={isWindows ? macos.url : windows.url}
-          label={isWindows ? macos.label : windows.label}
-          icon={<Download className="size-4" strokeWidth={2} />}
+          href={other.url}
+          label={other.label}
+          icon={<PlatformIcon src={other.icon} />}
         />
         <IconSwapButton
           href={SITE.repo}
