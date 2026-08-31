@@ -10,6 +10,12 @@
 // The pipe name includes the user so two accounts on the same machine cannot
 // collide in the global pipe namespace.
 function pipeName() {
+  // The seam that lets the daemon be exercised off Windows. Node's net server
+  // takes a Unix socket path through the same call, so the whole transport —
+  // and every timer the daemon schedules around it — can run in the ordinary
+  // development loop instead of only on a Windows runner.
+  if (process.env.CODESTATUS_PIPE) return process.env.CODESTATUS_PIPE;
+
   const user = (process.env.USERNAME || 'user').replace(/[^A-Za-z0-9_-]/g, '');
   // Written by explicit concatenation: the name has to come out as
   // \\.\pipe\codestatus-<user>, and every backslash here is a real one.

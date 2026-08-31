@@ -9,18 +9,25 @@
 // against the decoded object, so a leak cannot hide in a field we forgot to
 // look at.
 //
-// Needs the app closed: only one process can hold the named pipe.
+// On Windows this needs the app closed: only one process can hold the named
+// pipe. Elsewhere it runs against a Unix socket of its own, which is the point
+// — the daemon schedules four periodic tasks, and a suite that only ever ran on
+// a CI runner is a suite that finds out about them late. It found a missing
+// method that way once already, four seconds into every launch.
 
 const assert = require('assert');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-
-const { skipUnlessWindows } = require('./harness');
-
-if (skipUnlessWindows('transport')) process.exit(0);
-
 const os = require('os');
+
+const ON_WINDOWS = process.platform === 'win32';
+if (!ON_WINDOWS) {
+  process.env.CODESTATUS_PIPE = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'codestatus-')),
+    'transport.sock',
+  );
+}
 
 const { Daemon } = require('../src/daemon/daemon');
 const { AgentState } = require('../src/core/state');
@@ -239,6 +246,12 @@ function waitFor(predicate, timeoutMs = 5000) {
   // links, and a break in any of them shows up as an app that installs cleanly
   // and then reports nothing at all, for ever, with no error anywhere.
 
+  // Windows only: the shim is a .cmd run by cmd.exe, and neither exists here.
+  // Everything it chains to — the Electron binary as a Node interpreter, the
+  // hook, the transport — is covered by the cases above on every platform.
+  if (!ON_WINDOWS) {
+    console.log('  SKIP  the cmd.exe shim chain (needs Windows)');
+  } else {
   const shim = writeShim();
   console.log(`  ..    shim ${shim}`);
   for (const line of fs.readFileSync(shim, 'utf8').trim().split(/\r?\n/)) {
@@ -286,8 +299,34 @@ function waitFor(predicate, timeoutMs = 5000) {
       `nothing arrived. output: ${spacedRun.out || '(none)'}`,
     );
   });
+  }
 
-  // --- 5. the spool, when the daemon is away --------------------------------
+  // --- 5. the work the daemon does on a timer -------------------------------
+
+  // Every periodic task, called the way its interval calls it. A timer whose
+  // callback does not exist throws four seconds into the process and takes the
+  // app with it, and until this existed nothing here ran long enough to notice.
+  check('every scheduled task is callable', () => {
+    for (const task of ['touchHeartbeat', 'drainSpool', 'checkLiveness', 'sweep']) {
+      assert.strictEqual(typeof daemon[task], 'function', `daemon.${task} is missing`);
+      assert.doesNotThrow(() => daemon[task](), `daemon.${task}() threw`);
+    }
+  });
+
+  check('sweeping collects a session past its grace period', () => {
+    const id = 'claudeCode:swept';
+    daemon.registry.sessions.set(id, {
+      id,
+      state: AgentState.ended,
+      endedAt: Date.now() - 60_000,
+      pid: null,
+      clock: { toJSON: () => ({}) },
+    });
+    daemon.sweep();
+    assert.ok(!daemon.registry.get(id), 'an ended session should have been collected');
+  });
+
+  // --- 6. the spool, when the daemon is away --------------------------------
 
   daemon.stop();
   const offlineSession = `off-${Date.now()}`;

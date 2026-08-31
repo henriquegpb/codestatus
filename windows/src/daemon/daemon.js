@@ -215,6 +215,22 @@ class Daemon extends EventEmitter {
     }
   }
 
+  // Drops ended sessions once their grace period is up.
+  //
+  // The registry keeps them briefly so the popover can show the row going away
+  // rather than having it vanish mid-glance; this is what actually collects
+  // them afterwards.
+  sweep() {
+    const removed = this.registry.sweep();
+    if (removed.length === 0) return;
+    this.emit(
+      'effects',
+      removed.map((sessionID) => ({ type: 'sessionRemoved', sessionID })),
+      this.snapshot(),
+    );
+    this.schedulePersist();
+  }
+
   // MARK: - Process discovery
 
   // Finds agents that are running and have never reported, and fills in the

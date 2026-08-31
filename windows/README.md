@@ -231,13 +231,18 @@ than the app.
 ## Tests
 
 ```powershell
-npm test           # everything; needs the app CLOSED
-npm run test:unit  # reducer, installer, platform — runs on any OS, app or no app
+npm test           # everything; on Windows, needs the app CLOSED
+npm run test:unit  # reducer, installer, platform — no daemon, no app
 ```
 
-`npm test` includes the transport suite, which starts its own daemon, so the app
-has to be closed: only one process can hold the named pipe. The unit suites have
-no such constraint and run on macOS and Linux too, which is most of the loop.
+Everything runs on any OS. On Windows the transport suite holds the named pipe,
+so the app has to be closed for it; elsewhere it opens a Unix socket of its own
+and cares about nothing.
+
+That it runs off Windows at all is deliberate. The daemon schedules four
+periodic tasks, and while this suite only ran on a CI runner one of them called
+a method that did not exist — a crash four seconds into every launch, invisible
+to every other test and to the app's own screenshots.
 
 - `test/reducer.test.js` — the state machine's invariants, ported case for case
   from `StateReducerTests.swift`. A late `PreToolUse` does not pull a session out
@@ -249,8 +254,10 @@ no such constraint and run on macOS and Linux too, which is most of the loop.
 - `test/platform.test.js` — the Windows-only parts: why a session is silent,
   which terminal it is in, which processes count as agents, what the tray says.
 - `test/transport.test.js` — real integration: starts the daemon, invokes the
-  hook the way Claude Code would, and checks state, privacy, delivery, and the
-  spool.
+  hook, and checks state, privacy, delivery, the scheduled tasks and the spool.
+  On Windows it also walks the chain Claude Code actually uses — cmd.exe, the
+  generated shim, the Electron binary as a Node interpreter — including from a
+  directory whose name contains a space.
 
 Two things here are eyes, not assertions:
 
