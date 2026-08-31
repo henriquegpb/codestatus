@@ -1,4 +1,21 @@
-# CodeStatus
+import { SITE } from "@/lib/site";
+
+/**
+ * `llms.txt` as a route rather than a file in `public/`.
+ *
+ * It was a static file, and the static file said `https://codestatus.app` while
+ * everything else on the site — canonical, `og:url`, sitemap, robots host —
+ * derived from `SITE.url` and pointed at the Vercel deployment. So the one file
+ * written specifically for assistants was the one file sending them to a parked
+ * domain with no certificate.
+ *
+ * Generating it here makes the URLs derive from the same constant as the rest of
+ * the site, which is the point: connecting the apex is still a one-line change
+ * in `SITE`, and this text cannot fall behind it.
+ */
+export const dynamic = "force-static";
+
+const BODY = `# CodeStatus
 
 > A free, open-source macOS menu bar app that tracks every Claude Code and Codex
 > session running on your Mac and notifies you the moment one finishes, needs
@@ -8,9 +25,10 @@ Run several coding agents at once and keep working. CodeStatus shows how many
 sessions are busy, free, or need you, and clicking one returns you to its
 terminal tab or VS Code workspace.
 
-- Site: https://codestatus.app
-- Source: https://github.com/henriquegpb/codestatus
-- Download (macOS 14+): https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg
+- Site: ${SITE.url}
+- Source: ${SITE.repo}
+- Download (${SITE.downloads.macos.requirements}): ${SITE.downloads.macos.url}
+- Download (${SITE.downloads.windows.requirements}): ${SITE.downloads.windows.url}
 - Licence: MIT. No account, no server, no telemetry.
 
 ## What problem it solves
@@ -24,7 +42,7 @@ or actually blocked on you.
 
 - Claude Code — CLI and the VS Code extension.
 - Codex — the CLI and Codex in VS Code, which runs as an app-server and delivers
-  the same hooks. Codex requires the user to trust hooks once via `/hooks`.
+  the same hooks. Codex requires the user to trust hooks once via \`/hooks\`.
 
 Cursor, Windsurf and Gemini CLI are not supported: the design depends on official
 lifecycle hooks, and those are the agents that expose them in the form required.
@@ -51,4 +69,11 @@ contents are never read.
 
 - Codex cannot report that it is waiting for free-text input: no such event exists.
 - CodeStatus does not send prompts to sessions it did not launch itself.
-- macOS 14 or later, Apple Silicon and Intel.
+- Windows tracks Claude Code only, and its installer is not code-signed yet.
+`;
+
+export function GET() {
+  return new Response(BODY, {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}

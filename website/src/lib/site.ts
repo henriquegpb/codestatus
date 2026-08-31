@@ -4,13 +4,13 @@ export const SITE = {
    * Every absolute URL the site emits derives from this: `metadataBase`, the
    * canonical, `og:url`, `og:image`, the sitemap and robots host.
    *
-   * It points at the Vercel deployment rather than at `codestatus.app` because
-   * that domain is still parked — it serves a "Coming Soon" page over HTTP and
-   * no valid certificate over HTTPS. A share card whose `og:image` resolves
-   * there is an unreachable image, so link previews come back blank. Point this
-   * back at the apex the moment the domain is connected; nothing else changes.
+   * This is the apex, and it has to stay the apex. While it pointed at the
+   * Vercel deployment the canonical on `codestatus.dev` named a different host
+   * as the real page, which hands every signal the domain earns to a hostname
+   * nobody is meant to link to. The `.vercel.app` deployment still answers, so
+   * it should redirect here rather than serve the same page at a second URL.
    */
-  url: "https://codestatus-hb.vercel.app",
+  url: "https://codestatus.dev",
   repo: "https://github.com/henriquegpb/codestatus",
 
   /**

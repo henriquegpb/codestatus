@@ -4,8 +4,16 @@
 
 **Stop watching AI work.**
 
-A native macOS presence layer for coding agents. Start several, keep working, and come back only
-when one is actually done or actually needs you.
+A macOS menu bar app that tracks every Claude Code and Codex session on your Mac and tells you
+the moment one finishes, needs approval, or is waiting on you. A native presence layer for coding
+agents: start several, keep working, and come back only when one is actually done or actually
+needs you.
+
+[**Download for macOS**](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg) ·
+[Download for Windows](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe) ·
+[codestatus.dev](https://codestatus.dev)
+
+macOS 14 or later · Windows 10 or later · MIT · no account, no server, no telemetry
 
 </div>
 
