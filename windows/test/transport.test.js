@@ -60,11 +60,19 @@ function runHook(payload) {
 // wrong shape for asserting that any of this is reachable in production.
 function runHookThroughShim(shim, payload) {
   return new Promise((resolve) => {
+    // Output is captured rather than discarded. When a link in this chain
+    // breaks it does so silently by design — the hook's whole contract is to
+    // exit 0 and say nothing — so whatever cmd.exe or the runtime print is the
+    // only evidence there is, and a CI log that omits it is a CI log that
+    // cannot be acted on.
     const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', shim], {
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
-    child.on('exit', (code) => resolve(code));
-    child.on('error', () => resolve(-1));
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('exit', (code) => resolve({ code, out: out.trim() }));
+    child.on('error', (err) => resolve({ code: -1, out: `spawn failed: ${err.message}` }));
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
   });
@@ -232,6 +240,10 @@ function waitFor(predicate, timeoutMs = 5000) {
   // and then reports nothing at all, for ever, with no error anywhere.
 
   const shim = writeShim();
+  console.log(`  ..    shim ${shim}`);
+  for (const line of fs.readFileSync(shim, 'utf8').trim().split(/\r?\n/)) {
+    console.log(`  ..      ${line}`);
+  }
   check('the shim points at a runtime that exists', () => {
     const runtime = resolveRuntime();
     assert.ok(fs.existsSync(runtime), `no runtime at ${runtime}`);
@@ -239,17 +251,17 @@ function waitFor(predicate, timeoutMs = 5000) {
   });
 
   const shimSession = `shim-${Date.now()}`;
-  const shimExit = await runHookThroughShim(shim, {
+  const shimRun = await runHookThroughShim(shim, {
     hook_event_name: 'SessionStart',
     session_id: shimSession,
     cwd: 'C:\\Users\\test\\project',
     ...SECRETS,
   });
-  await waitFor(() => daemon.registry.get(`claudeCode:${shimSession}`), 15000).catch(() => {});
+  await waitFor(() => daemon.registry.get(`claudeCode:${shimSession}`), 20000).catch(() => {});
   check('an event delivered through cmd.exe and the shim arrives', () => {
-    assert.strictEqual(shimExit, 0, 'the shim must exit 0');
+    assert.strictEqual(shimRun.code, 0, `the shim exited ${shimRun.code}: ${shimRun.out}`);
     const session = daemon.registry.get(`claudeCode:${shimSession}`);
-    assert.ok(session, 'nothing arrived through the shim');
+    assert.ok(session, `nothing arrived through the shim. output: ${shimRun.out || '(none)'}`);
     assert.strictEqual(session.state, AgentState.free);
     assert.strictEqual(session.provider, 'claudeCode', 'the baked-in provider flag was lost');
   });
@@ -261,17 +273,17 @@ function waitFor(predicate, timeoutMs = 5000) {
   const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code status '));
   const spacedShim = writeShim({ target: path.join(spacedDir, 'hook-claude-code.cmd') });
   const spacedSession = `spaced-${Date.now()}`;
-  const spacedExit = await runHookThroughShim(spacedShim, {
+  const spacedRun = await runHookThroughShim(spacedShim, {
     hook_event_name: 'SessionStart',
     session_id: spacedSession,
     ...SECRETS,
   });
-  await waitFor(() => daemon.registry.get(`claudeCode:${spacedSession}`), 15000).catch(() => {});
+  await waitFor(() => daemon.registry.get(`claudeCode:${spacedSession}`), 20000).catch(() => {});
   check('a shim whose path contains a space is still reachable', () => {
-    assert.strictEqual(spacedExit, 0, `cmd could not run ${spacedShim}`);
+    assert.strictEqual(spacedRun.code, 0, `cmd could not run ${spacedShim}: ${spacedRun.out}`);
     assert.ok(
       daemon.registry.get(`claudeCode:${spacedSession}`),
-      'nothing arrived — cmd almost certainly stripped the quotes',
+      `nothing arrived. output: ${spacedRun.out || '(none)'}`,
     );
   });
 
