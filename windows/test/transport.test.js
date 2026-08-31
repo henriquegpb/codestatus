@@ -20,9 +20,12 @@ const { skipUnlessWindows } = require('./harness');
 
 if (skipUnlessWindows('transport')) process.exit(0);
 
+const os = require('os');
+
 const { Daemon } = require('../src/daemon/daemon');
 const { AgentState } = require('../src/core/state');
 const { paths } = require('../src/platform/paths');
+const { writeShim, resolveRuntime } = require('../src/platform/runtime');
 
 const HOOK = path.join(__dirname, '..', 'hook', 'hook.js');
 
@@ -43,6 +46,25 @@ function runHook(payload) {
       stdio: ['pipe', 'ignore', 'ignore'],
     });
     child.on('exit', (code) => resolve(code));
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+// The hook the way Claude Code actually reaches it: cmd.exe spawned with our
+// argument vector, running the generated shim, which sets ELECTRON_RUN_AS_NODE
+// and hands over to the Electron binary as a Node interpreter.
+//
+// runHook above skips all of that and runs hook.js under the Node running the
+// test, which is the right shape for asserting privacy and delivery and the
+// wrong shape for asserting that any of this is reachable in production.
+function runHookThroughShim(shim, payload) {
+  return new Promise((resolve) => {
+    const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', shim], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    child.on('exit', (code) => resolve(code));
+    child.on('error', () => resolve(-1));
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
   });
@@ -200,7 +222,60 @@ function waitFor(predicate, timeoutMs = 5000) {
     assert.strictEqual(seenLines.length - before, BURST);
   });
 
-  // --- 4. the spool, when the daemon is away --------------------------------
+  // --- 4. the chain Claude Code actually walks ------------------------------
+
+  // Everything above invokes hook.js directly. Nothing above proves the app
+  // works, because in production nothing invokes hook.js directly: Claude Code
+  // spawns cmd.exe, which runs a generated .cmd, which sets an environment
+  // variable, which turns an Electron binary into a Node interpreter. Four
+  // links, and a break in any of them shows up as an app that installs cleanly
+  // and then reports nothing at all, for ever, with no error anywhere.
+
+  const shim = writeShim();
+  check('the shim points at a runtime that exists', () => {
+    const runtime = resolveRuntime();
+    assert.ok(fs.existsSync(runtime), `no runtime at ${runtime}`);
+    assert.ok(fs.readFileSync(shim, 'utf8').includes('ELECTRON_RUN_AS_NODE'));
+  });
+
+  const shimSession = `shim-${Date.now()}`;
+  const shimExit = await runHookThroughShim(shim, {
+    hook_event_name: 'SessionStart',
+    session_id: shimSession,
+    cwd: 'C:\\Users\\test\\project',
+    ...SECRETS,
+  });
+  await waitFor(() => daemon.registry.get(`claudeCode:${shimSession}`), 15000).catch(() => {});
+  check('an event delivered through cmd.exe and the shim arrives', () => {
+    assert.strictEqual(shimExit, 0, 'the shim must exit 0');
+    const session = daemon.registry.get(`claudeCode:${shimSession}`);
+    assert.ok(session, 'nothing arrived through the shim');
+    assert.strictEqual(session.state, AgentState.free);
+    assert.strictEqual(session.provider, 'claudeCode', 'the baked-in provider flag was lost');
+  });
+
+  // The reason the provider flag lives inside the shim rather than after it in
+  // the argument vector. The real shim sits under the user's profile folder,
+  // which Windows allows to contain a space, and `cmd /c` only preserves the
+  // quotes around a path while nothing follows the closing one.
+  const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code status '));
+  const spacedShim = writeShim({ target: path.join(spacedDir, 'hook-claude-code.cmd') });
+  const spacedSession = `spaced-${Date.now()}`;
+  const spacedExit = await runHookThroughShim(spacedShim, {
+    hook_event_name: 'SessionStart',
+    session_id: spacedSession,
+    ...SECRETS,
+  });
+  await waitFor(() => daemon.registry.get(`claudeCode:${spacedSession}`), 15000).catch(() => {});
+  check('a shim whose path contains a space is still reachable', () => {
+    assert.strictEqual(spacedExit, 0, `cmd could not run ${spacedShim}`);
+    assert.ok(
+      daemon.registry.get(`claudeCode:${spacedSession}`),
+      'nothing arrived — cmd almost certainly stripped the quotes',
+    );
+  });
+
+  // --- 5. the spool, when the daemon is away --------------------------------
 
   daemon.stop();
   const offlineSession = `off-${Date.now()}`;

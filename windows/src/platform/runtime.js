@@ -98,12 +98,15 @@ function shimPath(provider = 'claude-code') {
 //
 // Rewritten on every install, because both the runtime and the script path move
 // when the app is updated or reinstalled somewhere else.
+// `target` exists for the test that runs the generated file from a path with a
+// space in it. The quoting rule that decides this design is only worth
+// believing if something exercises it.
 function writeShim({
   provider = 'claude-code',
   runtime = resolveRuntime(),
   script = resolveHookScript(),
+  target = shimPath(provider),
 } = {}) {
-  const target = shimPath(provider);
   fs.mkdirSync(path.dirname(target), { recursive: true });
 
   // `setlocal` keeps the variable from leaking into anything cmd.exe runs
