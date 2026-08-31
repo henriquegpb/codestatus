@@ -1,6 +1,6 @@
 {
   "name": "codestatus-windows",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Session monitor for Claude Code, in the Windows system tray",
   "main": "src/main.js",
   "license": "MIT",
