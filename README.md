@@ -9,6 +9,8 @@ the moment one finishes, needs approval, or is waiting on you. A native presence
 agents: start several, keep working, and come back only when one is actually done or actually
 needs you.
 
+<img src="website/public/DemoMenubar.png" width="640" alt="The CodeStatus menu bar popover: three sessions with their provider, state, and elapsed time, a note that three more are not reporting yet, and Refresh, Settings and Quit along the bottom.">
+
 [**Download for macOS**](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg) ·
 [Download for Windows](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe) ·
 [codestatus.dev](https://codestatus.dev)
