@@ -8,10 +8,11 @@
   "scripts": {
     "start": "electron .",
     "test": "npm run test:unit && npm run test:transport",
-    "test:unit": "node test/reducer.test.js && node test/installer.test.js && node test/platform.test.js",
+    "test:unit": "node test/reducer.test.js && node test/installer.test.js && node test/platform.test.js && node test/titles.test.js",
     "test:reducer": "node test/reducer.test.js",
     "test:installer": "node test/installer.test.js",
     "test:platform": "node test/platform.test.js",
+    "test:titles": "node test/titles.test.js",
     "test:transport": "node test/transport.test.js",
     "preview": "electron test/preview.js",
     "icons": "electron test/render-icons.js",

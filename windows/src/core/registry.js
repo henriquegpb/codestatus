@@ -263,11 +263,22 @@ class SessionRegistry {
   }
 
   // Serialisable snapshot, to persist across app restarts.
+  // The snapshot, minus the session title.
+  //
+  // Mirrors AgentSession's CodingKeys on macOS: the title is text the model
+  // wrote out of the conversation, and sessions.json is the only file this app
+  // keeps of its own. Leaving it out costs nothing — the next sweep reads it
+  // back within ten seconds, from the agent's own store, where it is anyway —
+  // and a title restored across a restart could be one that was changed while
+  // we were not running.
   toJSON() {
     return {
       version: 1,
       savedAt: Date.now(),
-      sessions: this.all.map((s) => ({ ...s, clock: s.clock.toJSON() })),
+      sessions: this.all.map(({ sessionTitle, ...session }) => ({
+        ...session,
+        clock: session.clock.toJSON(),
+      })),
     };
   }
 }

@@ -79,6 +79,10 @@ final class SessionDaemon {
 
     private var ticksSinceReap = 0
 
+    /// Reads the names the agents give their own sessions. Lazy because it
+    /// needs `paths`, which is not available until `init` has run.
+    private lazy var titleReader = SessionTitleReader(home: paths.home)
+
     /// Seconds between liveness sweeps of the registry.
     ///
     /// A backstop, not the mechanism: `EVFILT_PROC` reports an exit the instant
@@ -513,6 +517,10 @@ final class SessionDaemon {
             ticksSinceReap = 0
             reapDeadSessions()
             drainSpoolIfNotEmpty()
+            if refreshTitles() {
+                publish(now)
+                return
+            }
         }
         let removed = registry.pruneEnded(olderThan: endedLinger, now: now)
         guard removed.isEmpty else {
@@ -528,6 +536,37 @@ final class SessionDaemon {
         } else {
             model.tick(now)
         }
+    }
+
+    /// Picks up the name each agent gave its own session.
+    ///
+    /// On the ten-second sweep rather than on `apply`, for two reasons. It
+    /// touches the filesystem, and `apply` runs on every tool call of every
+    /// session. And there would be nothing to read: Claude Code writes its
+    /// first `custom-title` a turn or so into a session, so a lookup at
+    /// `SessionStart` is guaranteed to come back empty. A row therefore leads
+    /// with its repository for the first few sweeps and then takes the title,
+    /// which is the honest order — we did not know it yet.
+    ///
+    /// Returns whether anything changed, so a quiet sweep does not republish.
+    private func refreshTitles() -> Bool {
+        var changed = false
+        var live: Set<String> = []
+
+        for var session in registry.all {
+            guard let sessionID = session.providerSessionID else { continue }
+            live.insert(sessionID)
+            let title = titleReader.title(for: session.provider, sessionID: sessionID)
+            // A title that has gone missing — a rotated transcript, a deleted
+            // index — is not evidence that the session was renamed to nothing.
+            guard let title, title != session.sessionTitle else { continue }
+            session.sessionTitle = title
+            registry.update(session)
+            changed = true
+        }
+
+        titleReader.prune(keeping: live)
+        return changed
     }
 
     private func currentDiagnosis(_ now: Date) -> UnreportedDiagnosis {
