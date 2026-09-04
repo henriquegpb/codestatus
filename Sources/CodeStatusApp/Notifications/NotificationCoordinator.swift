@@ -213,6 +213,12 @@ public final class NotificationCoordinator {
     /// Metadata only: agent, project, state, and a safe action. Never a summary
     /// of what the agent said — reading the transcript to produce one is exactly
     /// the privacy line this project does not cross.
+    ///
+    /// The first line names the repository and the second names the session,
+    /// which is the split ``AgentSession/announcement(_:)`` exists to make.
+    /// Three sessions in one repository would otherwise send three identical
+    /// banners, and a banner is the thing that makes you stop what you are
+    /// doing — the surface where being unable to tell them apart costs most.
     static func content(for transition: Transition, session: AgentSession) -> Content? {
         let agent = session.provider.displayName
         let project = session.displayName
@@ -223,28 +229,28 @@ public final class NotificationCoordinator {
             guard transition.from == .busy else { return nil }
             return Content(
                 title: "\(agent) finished in \(project)",
-                body: "Ready for another prompt.",
+                body: session.announcement("Ready for another prompt."),
                 tone: .completion
             )
 
         case .waitingForApproval:
             return Content(
                 title: "\(agent) needs your approval in \(project)",
-                body: "Open the session to review the command.",
+                body: session.announcement("Open the session to review the command."),
                 tone: .attention
             )
 
         case .waitingForInput:
             return Content(
                 title: "\(agent) is waiting for you in \(project)",
-                body: "Open the session to answer.",
+                body: session.announcement("Open the session to answer."),
                 tone: .attention
             )
 
         case .failed:
             return Content(
                 title: "\(agent) stopped with an error in \(project)",
-                body: "Open the session to see what happened.",
+                body: session.announcement("Open the session to see what happened."),
                 tone: .attention
             )
 
@@ -253,7 +259,7 @@ public final class NotificationCoordinator {
             guard transition.source == .process, transition.from != .free else { return nil }
             return Content(
                 title: "\(agent) stopped unexpectedly",
-                body: "The session in \(project) is no longer running.",
+                body: session.announcement("The session in \(project) is no longer running."),
                 tone: .attention
             )
 

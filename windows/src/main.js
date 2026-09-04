@@ -28,7 +28,9 @@ const os = require('os');
 
 const { Daemon } = require('./daemon/daemon');
 const { buildIcon, buildTooltip } = require('./ui/tray-icon');
-const { displayName } = require('./core/session');
+const {
+  displayName, primaryLabel, secondaryLabel, announcement,
+} = require('./core/session');
 const {
   AgentState, LABELS, needsAttention, isTurnCompletion,
 } = require('./core/state');
@@ -213,7 +215,9 @@ function showHUD() {
 function sessionForRenderer(session) {
   return {
     id: session.id,
-    name: displayName(session),
+    name: primaryLabel(session),
+    // The repository, sent only when the title has taken the line above it.
+    location: secondaryLabel(session),
     provider: session.provider,
     state: session.state,
     label: LABELS[session.state] || session.state,
@@ -368,6 +372,9 @@ function formatDuration(seconds) {
 function notifyTransition(transition, session) {
   if (!Notification.isSupported()) return;
 
+  // The toast leads with the repository and the body names the session, which
+  // is the split announcement() exists to make: three sessions in one
+  // repository would otherwise send three identical toasts.
   const name = session ? displayName(session) : 'Session';
   const silent = !prefs.get('soundEnabled');
   let body = null;
@@ -386,6 +393,8 @@ function notifyTransition(transition, session) {
   } else {
     return;
   }
+
+  if (session) body = announcement(session, body);
 
   const notification = new Notification({ title: name, body, silent });
   notification.on('click', () => {

@@ -3,8 +3,9 @@
 // The popover's renderer.
 //
 // Builds every node with the DOM API rather than innerHTML. Nothing here is
-// user-authored markup, but session names come from directory names on disk,
-// and a folder is allowed to be called anything at all.
+// user-authored markup, but a session name is either a directory name on disk
+// or a title the agent's model wrote — a folder is allowed to be called
+// anything at all, and so is a sentence.
 
 const surface = document.getElementById('surface');
 const summaryEl = document.getElementById('summary');
@@ -109,6 +110,10 @@ function renderSession(session) {
 
   const meta = el('div', 'meta');
   const provider = PROVIDER_NAMES[session.provider] || 'Agent';
+  // Where, before what. Both lines ellipsize from the right, so the location
+  // has to come first to survive a narrow row — and the age, which the tick
+  // keeps redrawing anyway, is the cheapest thing to lose off the end.
+  if (session.location) meta.appendChild(el('span', null, `${session.location} · `));
   meta.appendChild(el('span', null, `${provider} · ${session.label}`));
   if (showsDuration(session.state)) {
     meta.appendChild(el('span', null, ' · '));
