@@ -236,6 +236,11 @@ struct StatePersistenceTests {
         // Reviewed: a bool recording only whether an agent has ever sent us an
         // event for this session. Carries nothing about what was said.
         "hasHookEvidence",
+        // Reviewed and *excluded from the snapshot*: the name the agent gave
+        // the session, which the model writes out of the conversation. It is
+        // held in memory to label a row and is left out of `CodingKeys`, so it
+        // never reaches this file. See the negative assertion below.
+        "sessionTitle",
     ]
 
     private func makeSession(now: Date) -> AgentSession {
@@ -420,6 +425,9 @@ struct StatePersistenceTests {
         let sessions = try #require(object["sessions"] as? [[String: Any]])
         let encoded = Set(sessions.flatMap(\.keys))
         #expect(encoded.isSubset(of: Self.reviewedSessionFields))
+        // Reviewed as in-memory only. Spelled out rather than left to the
+        // subset check, which would happily pass if it started being written.
+        #expect(encoded.contains("sessionTitle") == false)
 
         // The obvious content-bearing names, spelled out so the guarantee is
         // readable rather than implied by a set comparison.

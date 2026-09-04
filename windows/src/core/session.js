@@ -44,6 +44,17 @@ function makeSession({
     cwd: null,
     repositoryName: null,
     workspaceName: null,
+    // The name the agent gave this session itself — Claude Code's
+    // custom-title, Codex's thread_name. Enrichment, never identity: it
+    // arrives a turn or two after the session does, it never arrives at all
+    // for `codex exec`, and it is read from the agent's own transcript store
+    // rather than from a hook. Everything that has to be correct stays on
+    // displayName, which does not consult it.
+    //
+    // Held in memory only. The persisted snapshot leaves it out, exactly as
+    // AgentSession's CodingKeys do on macOS, so the one file this app writes
+    // stays free of anything the model composed.
+    sessionTitle: null,
     model: null,
     permissionMode: null,
 
@@ -80,6 +91,44 @@ function displayName(session) {
   return providerDisplayName(session.provider);
 }
 
+// The agent's own name for this session, normalised so that a title which is
+// present but empty reads as absent everywhere it is consulted.
+function agentTitle(session) {
+  return session.sessionTitle || null;
+}
+
+// What the row leads with: the agent's own title when there is one.
+//
+// Three sessions in the same repository are three rows reading `backend`,
+// which is the one case where the location is no help at all — so when the
+// agent has named the session, that name goes first and the location moves to
+// secondaryLabel rather than being dropped.
+function primaryLabel(session) {
+  return agentTitle(session) || displayName(session);
+}
+
+// The location, but only once the title has taken the line above it. Null
+// without a title, so the caller cannot render the same string twice.
+function secondaryLabel(session) {
+  return agentTitle(session) ? displayName(session) : null;
+}
+
+// A toast body, led by the agent's own name for the session.
+//
+// The toast's first line stays the repository, for two reasons. It is what
+// survives when Windows collapses a stack of notifications into the Action
+// Center. And it is the wrong place for text the model composed out of a
+// conversation, which a toast shows on a lock screen whether or not the room
+// is empty.
+//
+// The body is where the ambiguity actually needed solving: three sessions in
+// one repository produce three identical toasts, and a notification is the
+// surface that makes you stop what you are doing.
+function announcement(session, sentence) {
+  const title = agentTitle(session);
+  return title ? `${title} — ${sentence}` : sentence;
+}
+
 function durationMs(session, now) {
   return now - session.stateChangedAt;
 }
@@ -89,5 +138,9 @@ module.exports = {
   sessionIDFromProvider,
   sessionIDFromProcess,
   displayName,
+  agentTitle,
+  primaryLabel,
+  secondaryLabel,
+  announcement,
   durationMs,
 };

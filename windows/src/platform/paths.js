@@ -58,6 +58,17 @@ const paths = {
   // install without writing to the user's actual configuration.
   claudeSettings: process.env.CODESTATUS_CLAUDE_SETTINGS
     || path.join(home, '.claude', 'settings.json'),
+
+  // Not ours, and not written by us: the agents' own session stores, read to
+  // recover the name a session gave itself. See platform/titles.js for what is
+  // taken out of them, which is the title and nothing else.
+  //
+  // Both are undocumented and unversioned, so every read there is written to
+  // fail into a null rather than into an error.
+  claudeProjects: process.env.CODESTATUS_CLAUDE_PROJECTS
+    || path.join(home, '.claude', 'projects'),
+  codexSessionIndex: process.env.CODESTATUS_CODEX_INDEX
+    || path.join(home, '.codex', 'session_index.jsonl'),
 };
 
 function createDirectories() {

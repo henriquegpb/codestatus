@@ -89,8 +89,29 @@ metadata allowlist without ever copying those bytes. Your prompts, the agent's r
 inputs and outputs, and transcript paths are *incapable* of reaching the socket, the logs, or
 the crash reporter, and there is a test that asserts exactly that.
 
-What we do read: session id, provider, event name, timestamp, pid, tty, working directory, git
-root, workspace name, and host application.
+What we do read through the hook: session id, provider, event name, timestamp, pid, tty, working
+directory, git root, workspace name, and host application.
+
+One thing is read outside that channel, and it is worth being precise about. To label a row with
+the name a session actually has — `Calendar fix` rather than a third row reading `backend` — the
+app reads the newest `custom-title` record from Claude Code's own transcript, and `thread_name`
+from Codex's session index. That happens in the app, not in the hook: `transcript_path` stays off
+the hook's allowlist, and nothing about it crosses the socket. Only the title is kept; the bytes
+read to find it are searched and dropped.
+
+Because that title is written by a model out of your conversation, it is treated as content
+rather than as metadata everywhere it could travel. It is never persisted — `sessions.json` has
+no field for it, and there is a test that fails if one appears — and it is never included in the
+diagnostics report you paste into a bug report.
+
+It does appear in notifications, on the second line. Three sessions in one repository otherwise
+send three identical banners, and a banner is the thing that makes you stop what you are doing,
+so it is the surface where being unable to tell them apart costs most. The first line stays the
+repository: it reads as a sentence, and it is what survives when the system stacks or truncates
+banners.
+
+It is also the one thing here read from a store the agents do not document. Every failure to read
+it falls back to the working directory, which is what the row said before.
 
 ## Status
 

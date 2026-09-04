@@ -196,6 +196,15 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
     public var repositoryName: String?
     public var workspaceName: String?
 
+    /// The name the agent gave this session itself — Claude Code's
+    /// `custom-title`, Codex's `thread_name`.
+    ///
+    /// Enrichment, never identity. It arrives a turn or two after the session
+    /// does, it never arrives at all for `codex exec`, and it is read from the
+    /// agent's own transcript store rather than from a hook. Everything that
+    /// has to be correct stays on ``displayName``, which does not consult it.
+    public var sessionTitle: String?
+
     // Host
     public var hostApplication: HostApplication
     public var hostBundleIdentifier: String?
@@ -216,6 +225,30 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
 
     /// Ordering guard; not part of the user-visible model.
     public var clock: LogicalClock
+
+    /// Everything persisted — which is every field above except the title.
+    ///
+    /// `sessions.json` is the only file this app keeps of its own, and a
+    /// session title is text the model wrote out of the conversation. Leaving
+    /// it out is what keeps that file free of anything content-derived, and it
+    /// costs nothing: the next sweep reads the title back within ten seconds,
+    /// from the agent's own store, where it is anyway.
+    ///
+    /// It would also be the wrong thing to restore. A title saved before a
+    /// restart is a title that could have been changed while we were not
+    /// running, and a stale name is worse than a repository name.
+    private enum CodingKeys: String, CodingKey {
+        case id, provider
+        case providerSessionID, providerTurnID
+        case state, previousState, stateConfidence, stateChangedAt
+        case startedAt, lastEventAt
+        case pid, parentPID, processStartTime, tty
+        case cwd, gitRoot, repositoryName, workspaceName
+        case hostApplication, hostBundleIdentifier
+        case sourceAdapter, capabilities, controlTarget, lastError
+        case hasHookEvidence
+        case clock
+    }
 
     public init(
         id: SessionID,
@@ -255,6 +288,47 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
             if !component.isEmpty && component != "/" { return component }
         }
         return provider.displayName
+    }
+
+    /// The agent's own name for this session, normalised so that a title which
+    /// is present but empty reads as absent everywhere it is consulted.
+    public var agentTitle: String? {
+        guard let sessionTitle, !sessionTitle.isEmpty else { return nil }
+        return sessionTitle
+    }
+
+    /// What the row leads with: the agent's own title when there is one.
+    ///
+    /// Three sessions in the same repository are three rows reading `backend`,
+    /// which is the one case where the location is no help at all — so when the
+    /// agent has named the session, that name goes first and the location moves
+    /// to ``secondaryLabel`` rather than being dropped.
+    public var primaryLabel: String {
+        agentTitle ?? displayName
+    }
+
+    /// The location, but only once the title has taken the line above it.
+    ///
+    /// `nil` without a title, so the caller cannot render the same string
+    /// twice on a session we know nothing extra about.
+    public var secondaryLabel: String? {
+        agentTitle == nil ? nil : displayName
+    }
+
+    /// A notification body, led by the agent's own name for the session.
+    ///
+    /// The banner's first line stays locative — "needs your approval in
+    /// backend" — for two reasons. It reads as a sentence, which a title
+    /// substituted into "in \(project)" does not. And the first line is what
+    /// survives when the system stacks or truncates banners, so it is the
+    /// wrong place to put text the model composed out of a conversation.
+    ///
+    /// The body is where the ambiguity actually needed solving: three sessions
+    /// in one repository produce three identical banners, and a notification
+    /// is the surface that makes you stop what you are doing.
+    public func announcement(_ sentence: String) -> String {
+        guard let agentTitle else { return sentence }
+        return "\(agentTitle) — \(sentence)"
     }
 
     /// How long the session has been in its current state.

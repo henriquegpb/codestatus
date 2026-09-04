@@ -356,11 +356,20 @@ private struct SessionRow: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayName)
+                Text(session.primaryLabel)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
 
                 HStack(spacing: 4) {
+                    // Where, before what. Both lines are single-line and
+                    // truncate from the right, so the location has to come
+                    // first to survive a narrow row — and the duration, which
+                    // the tick keeps redrawing anyway, is the cheapest thing
+                    // to lose off the end.
+                    if let location = session.secondaryLabel {
+                        Text(location)
+                        Text("·")
+                    }
                     Text(session.provider.displayName)
                     Text("·")
                     Text(session.state.label)
@@ -397,7 +406,12 @@ private struct SessionRow: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(session.displayName), \(session.provider.displayName), \(session.state.label)"
+            [
+                session.primaryLabel,
+                session.secondaryLabel,
+                session.provider.displayName,
+                session.state.label,
+            ].compactMap { $0 }.joined(separator: ", ")
         )
     }
 

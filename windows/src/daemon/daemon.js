@@ -22,6 +22,8 @@ const { paths, createDirectories } = require('../platform/paths');
 const { pipeName } = require('../platform/transport');
 const { scan } = require('../platform/process-scan');
 const { hostFromProcessTree } = require('../platform/host');
+const { gitRoot } = require('../platform/workspace');
+const { SessionTitleReader } = require('../platform/titles');
 const { SessionRegistry } = require('../core/registry');
 const { decodeLine, processExitedEvent } = require('./decoder');
 const { LogicalClock } = require('../core/clock');
@@ -34,6 +36,11 @@ const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const SPOOL_DRAIN_INTERVAL_MS = 2 * 1000;
 const LIVENESS_INTERVAL_MS = 5 * 1000;
 const SWEEP_INTERVAL_MS = 4 * 1000;
+// How often to ask the agents what they have named their own sessions, and to
+// resolve the repository a session sits in. Matches the macOS sweep. Both are
+// filesystem work, which is why neither happens on the event path: a hook
+// arrives on every tool call of every session.
+const LABEL_INTERVAL_MS = 10 * 1000;
 // Slow on purpose: the scan shells out to PowerShell and costs a few hundred
 // milliseconds. Nothing time-critical depends on it — hooks arrive over the
 // pipe regardless — so it only has to be fast enough to explain a silent agent
@@ -65,6 +72,7 @@ class Daemon extends EventEmitter {
     this.scanning = false;
     this.scanEnabled = true;
     this.lastScanFailed = false;
+    this.titles = new SessionTitleReader();
   }
 
   start() {
@@ -77,6 +85,7 @@ class Daemon extends EventEmitter {
     this.timers.push(setInterval(() => this.drainSpool(), SPOOL_DRAIN_INTERVAL_MS));
     this.timers.push(setInterval(() => this.checkLiveness(), LIVENESS_INTERVAL_MS));
     this.timers.push(setInterval(() => this.sweep(), SWEEP_INTERVAL_MS));
+    this.timers.push(setInterval(() => this.refreshLabels(), LABEL_INTERVAL_MS));
     this.timers.push(setInterval(() => this.scanForAgents(), PROCESS_SCAN_INTERVAL_MS));
 
     // Events that arrived while the app was closed.
@@ -229,6 +238,45 @@ class Daemon extends EventEmitter {
       this.snapshot(),
     );
     this.schedulePersist();
+  }
+
+  // Picks up what each row should be called: the repository a session is in,
+  // and the name the agent gave the session itself.
+  //
+  // On a sweep rather than on an event, for two reasons. It touches the
+  // filesystem. And there would be nothing to read: Claude Code writes its
+  // first custom-title a turn or so into a session, so a lookup at
+  // SessionStart is guaranteed to come back empty. A row therefore leads with
+  // its repository for the first sweep or two and then takes the title, which
+  // is the honest order — we did not know it yet.
+  refreshLabels() {
+    let changed = false;
+    const live = new Set();
+
+    for (const session of this.registry.all) {
+      // Resolved once and kept: a session does not change repository, and the
+      // walk is the expensive half of this pass.
+      if (session.cwd && !session.repositoryName) {
+        const root = gitRoot(session.cwd);
+        if (root) {
+          session.gitRoot = root;
+          session.repositoryName = path.basename(root);
+          changed = true;
+        }
+      }
+
+      if (!session.providerSessionID) continue;
+      live.add(session.providerSessionID);
+      const title = this.titles.title(session.provider, session.providerSessionID);
+      // A title that has gone missing — a rotated transcript, a deleted index
+      // — is not evidence that the session was renamed to nothing.
+      if (!title || title === session.sessionTitle) continue;
+      session.sessionTitle = title;
+      changed = true;
+    }
+
+    this.titles.prune(live);
+    if (changed) this.emit('effects', [{ type: 'labelsRefreshed' }], this.snapshot());
   }
 
   // MARK: - Process discovery

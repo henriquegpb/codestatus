@@ -54,6 +54,10 @@ struct DiagnosticsBuilder {
 
     /// Metadata only — never a prompt, a response, or a file path beyond the
     /// project root.
+    ///
+    /// Which is why this uses `displayName` and not `primaryLabel`: the report
+    /// exists to be exported and pasted into a bug report, and a session title
+    /// is a model-written summary of what the user was working on.
     static func summarize(_ session: AgentSession) -> String {
         let host = session.hostApplication == .unknown ? "" : " in \(session.hostApplication.displayName)"
         return "\(session.displayName) — \(session.provider.displayName) — \(session.state.rawValue)\(host)"
