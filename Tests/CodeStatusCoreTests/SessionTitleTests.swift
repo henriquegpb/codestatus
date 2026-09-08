@@ -17,6 +17,42 @@ private func makeTestHome() throws -> URL {
     return home
 }
 
+/// Writes one record where the Claude Code desktop app keeps its session list.
+///
+/// Verbatim field names from a real store, trimmed to what the reader reads —
+/// the real record also carries the session's whole MCP tool roster, which is
+/// what makes these files about 90 KB each and worth not re-parsing.
+@discardableResult
+private func writeDesktopSession(
+    home: URL,
+    workspace: String = "ws-1",
+    project: String = "proj-1",
+    file: String,
+    cliSessionID: String?,
+    title: String?,
+    titleSource: String = "user",
+    archived: Bool = false,
+    lastActivityAt: Double = 1_788_890_634_095
+) throws -> URL {
+    let directory = home.appendingPathComponent(
+        "Library/Application Support/Claude/claude-code-sessions/\(workspace)/\(project)",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    var record: [String: Any] = [
+        "titleSource": titleSource,
+        "isArchived": archived,
+        "lastActivityAt": lastActivityAt,
+    ]
+    if let cliSessionID { record["cliSessionId"] = cliSessionID }
+    if let title { record["title"] = title }
+
+    let url = directory.appendingPathComponent(file)
+    try JSONSerialization.data(withJSONObject: record).write(to: url)
+    return url
+}
+
 /// Writes a transcript where Claude Code writes one, slug and all.
 @discardableResult
 private func writeTranscript(
@@ -78,6 +114,98 @@ struct SessionTitleTests {
 
         let reader = SessionTitleReader(home: home)
         #expect(reader.title(for: .claudeCode, sessionID: session) == "Renamed by hand")
+    }
+
+    @Test("A session renamed in the desktop app takes the new name, not the transcript's")
+    func desktopRenameWins() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "21922c07-c5d7-4bf3-ab35-4e0fd639c5d5"
+
+        // The transcript keeps the title that was appended to it earlier. A
+        // rename typed in the session list never reaches it, so a reader that
+        // consults only the transcript shows a name the user already changed.
+        try writeTranscript(home: home, slug: "-Users-x-backend", sessionID: session, lines: [
+            customTitleRecord("Situação da infraestrutura WAHA", session: session),
+            aiTitleRecord("Explicar a situação da infraestrutura", session: session),
+        ])
+        try writeDesktopSession(
+            home: home, file: "local_a.json", cliSessionID: session, title: "WAHA Infra"
+        )
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "WAHA Infra")
+    }
+
+    @Test("A rename after the title was already read is picked up")
+    func desktopRenameInvalidatesTheCache() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "aaaa1111-bbbb-2222-cccc-333333333333"
+        let url = try writeDesktopSession(
+            home: home, file: "local_b.json", cliSessionID: session, title: "Before the rename"
+        )
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "Before the rename")
+
+        // A rename rewrites that one file, which is the only signal there is:
+        // no directory above it changes, and nothing is appended anywhere.
+        try writeDesktopSession(
+            home: home, file: "local_b.json", cliSessionID: session, title: "After the rename"
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path
+        )
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "After the rename")
+    }
+
+    @Test("With no desktop store the transcript is still read")
+    func withoutDesktopStore() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "cccc4444-dddd-5555-eeee-666666666666"
+        // A CLI-only machine has no such directory at all.
+        try writeTranscript(home: home, slug: "-Users-x-cli", sessionID: session, lines: [
+            aiTitleRecord("Next.js CVE upgrade", session: session),
+        ])
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "Next.js CVE upgrade")
+    }
+
+    @Test("A desktop record with no title falls through to the transcript")
+    func desktopWithoutTitleFallsThrough() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "eeee7777-ffff-8888-9999-000000000000"
+        try writeTranscript(home: home, slug: "-Users-x-untitled", sessionID: session, lines: [
+            customTitleRecord("From the transcript", session: session),
+        ])
+        try writeDesktopSession(
+            home: home, file: "local_c.json", cliSessionID: session, title: nil
+        )
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "From the transcript")
+    }
+
+    @Test("A live desktop record outranks an archived one for the same session")
+    func liveRecordOutranksArchived() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "12341234-5678-5678-9012-901290129012"
+        try writeDesktopSession(
+            home: home, file: "local_archived.json", cliSessionID: session,
+            title: "The archived one", archived: true, lastActivityAt: 9_000_000_000_000
+        )
+        try writeDesktopSession(
+            home: home, file: "local_live.json", cliSessionID: session,
+            title: "The live one", archived: false, lastActivityAt: 1_000
+        )
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "The live one")
     }
 
     @Test("An ai-title names a session that has no custom-title")

@@ -53,6 +53,23 @@ public final class SessionTitleReader {
 
     private var claudeCache: [String: ClaudeEntry] = [:]
 
+    /// One session as the Claude Code desktop app records it.
+    private struct DesktopEntry {
+        var url: URL
+        var modified: Date
+        var title: String?
+        var archived: Bool
+        var lastActivity: Double
+    }
+
+    /// `cliSessionId` to the desktop app's own record of that session.
+    private var desktopBySession: [String: DesktopEntry] = [:]
+
+    /// Modification date of every store file we have already accounted for, so
+    /// a scan re-parses only what changed. These files carry the session's
+    /// whole MCP tool roster and run to about 90 KB each.
+    private var desktopFileStamps: [URL: Date] = [:]
+
     private var codexIndex: [String: String] = [:]
     private var codexStamp: Stamp?
 
@@ -74,9 +91,16 @@ public final class SessionTitleReader {
     /// The agent's own name for a session, or `nil` when it has not named one.
     public func title(for provider: AgentProvider, sessionID: String) -> String? {
         switch provider {
-        case .claudeCode: return claudeTitle(sessionID: sessionID)
-        case .codex: return codexTitle(sessionID: sessionID)
-        case .generic: return nil
+        case .claudeCode:
+            // The desktop app first. Renaming a session there updates only its
+            // own store: the transcript keeps whatever title was appended to
+            // it earlier, so reading the transcript alone shows a name the user
+            // has already changed and cannot get rid of.
+            return desktopTitle(sessionID: sessionID) ?? claudeTitle(sessionID: sessionID)
+        case .codex:
+            return codexTitle(sessionID: sessionID)
+        case .generic:
+            return nil
         }
     }
 
@@ -86,6 +110,115 @@ public final class SessionTitleReader {
     /// session the machine has ever run, held for as long as the app is up.
     public func prune(keeping live: Set<String>) {
         claudeCache = claudeCache.filter { live.contains($0.key) }
+        desktopBySession = desktopBySession.filter { live.contains($0.key) }
+        // Stamps are keyed by file, not by session, and a file we drop from
+        // the map is simply re-parsed the next time a scan needs it.
+        let known = Set(desktopBySession.values.map(\.url))
+        desktopFileStamps = desktopFileStamps.filter { known.contains($0.key) }
+    }
+
+    // MARK: - Claude Code, as the desktop app records it
+
+    /// Where the desktop app keeps its own session list.
+    ///
+    /// Layout is `<workspace>/<project>/local_<uuid>.json`, and each record
+    /// carries the fields that matter here:
+    ///
+    /// ```json
+    /// {"cliSessionId":"21922c07-…","title":"WAHA Infra","titleSource":"user",
+    ///  "isArchived":false,"lastActivityAt":1788890634095}
+    /// ```
+    ///
+    /// `cliSessionId` is the id the hook reports, which is what makes this
+    /// joinable to a session at all. `titleSource` is `user` for a name typed
+    /// in the session list and `auto` for one the app chose — measured at 9
+    /// and 1 across an 11-session store.
+    private var desktopSessions: URL {
+        home.appendingPathComponent(
+            "Library/Application Support/Claude/claude-code-sessions",
+            isDirectory: true
+        )
+    }
+
+    private func desktopTitle(sessionID: String) -> String? {
+        if let entry = desktopBySession[sessionID] {
+            if let modified = modificationDate(of: entry.url), modified == entry.modified {
+                return entry.title
+            }
+            // The file changed under us, which is exactly what a rename looks
+            // like, so re-read that one file rather than the whole store.
+            desktopBySession[sessionID] = nil
+            desktopFileStamps[entry.url] = nil
+            if let (id, refreshed) = readDesktopSession(entry.url), id == sessionID {
+                desktopBySession[id] = refreshed
+                return refreshed.title
+            }
+        }
+
+        scanDesktopStore()
+        return desktopBySession[sessionID]?.title
+    }
+
+    /// Walks the store, parsing only files whose modification date has moved.
+    ///
+    /// A machine with no desktop app has no such directory and this is three
+    /// failed directory reads; a CLI session on a machine that does have one
+    /// costs a `stat` per file and no parsing at all.
+    private func scanDesktopStore() {
+        guard let workspaces = try? fileManager.contentsOfDirectory(
+            at: desktopSessions, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for workspace in workspaces {
+            guard let projects = try? fileManager.contentsOfDirectory(
+                at: workspace, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for project in projects {
+                guard let files = try? fileManager.contentsOfDirectory(
+                    at: project, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+                ) else { continue }
+
+                for file in files where file.pathExtension == "json" {
+                    guard let modified = modificationDate(of: file) else { continue }
+                    // Already accounted for: whatever mapping this file holds
+                    // is in the index, so there is nothing to learn by parsing
+                    // 90 KB of it again.
+                    if desktopFileStamps[file] == modified { continue }
+                    desktopFileStamps[file] = modified
+                    guard let (id, entry) = readDesktopSession(file) else { continue }
+                    if let existing = desktopBySession[id],
+                       !supersedes(entry, existing) { continue }
+                    desktopBySession[id] = entry
+                }
+            }
+        }
+    }
+
+    /// Which of two records for one session id to believe.
+    ///
+    /// A live session outranks an archived one; between two of the same kind,
+    /// the one touched more recently wins. Only reachable when the store holds
+    /// duplicates for an id, which a forked session is the likely way to get.
+    private func supersedes(_ candidate: DesktopEntry, _ existing: DesktopEntry) -> Bool {
+        if candidate.archived != existing.archived { return !candidate.archived }
+        return candidate.lastActivity >= existing.lastActivity
+    }
+
+    private func readDesktopSession(_ url: URL) -> (String, DesktopEntry)? {
+        guard let modified = modificationDate(of: url),
+              let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = Self.nonEmpty(object["cliSessionId"])
+        else { return nil }
+
+        return (id, DesktopEntry(
+            url: url,
+            modified: modified,
+            title: Self.nonEmpty(object["title"]),
+            archived: object["isArchived"] as? Bool ?? false,
+            lastActivity: (object["lastActivityAt"] as? NSNumber)?.doubleValue ?? 0
+        ))
     }
 
     // MARK: - Claude Code
@@ -259,6 +392,11 @@ public final class SessionTitleReader {
         let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
         let modified = attributes[.modificationDate] as? Date ?? .distantPast
         return Stamp(size: size, modified: modified)
+    }
+
+    private func modificationDate(of url: URL) -> Date? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return nil }
+        return attributes[.modificationDate] as? Date
     }
 
     private func fileSize(of url: URL) -> UInt64? {

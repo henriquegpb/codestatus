@@ -44,8 +44,8 @@ function makeSession({
     cwd: null,
     repositoryName: null,
     workspaceName: null,
-    // The name the agent gave this session itself — Claude Code's
-    // custom-title, Codex's thread_name. Enrichment, never identity: it
+    // The name the agent has for this session — from Claude Code's session
+    // list or its transcript, or Codex's thread_name. Enrichment, never identity: it
     // arrives a turn or two after the session does, it never arrives at all
     // for `codex exec`, and it is read from the agent's own transcript store
     // rather than from a hook. Everything that has to be correct stays on

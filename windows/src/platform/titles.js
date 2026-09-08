@@ -48,6 +48,26 @@ function statOf(file) {
   }
 }
 
+// Absolute paths of a directory's entries, or nothing at all when it cannot be
+// read — which is the normal case on a machine with no desktop app.
+function readDirectory(dir) {
+  try {
+    return fs.readdirSync(dir).map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+// Which of two records for one session id to believe.
+//
+// A live session outranks an archived one; between two of the same kind, the
+// one touched more recently wins. Only reachable when the store holds
+// duplicates for an id, which a forked session is the likely way to get.
+function supersedes(candidate, existing) {
+  if (candidate.archived !== existing.archived) return !candidate.archived;
+  return candidate.lastActivity >= existing.lastActivity;
+}
+
 function sameStamp(a, b) {
   if (!a || !b) return a === b;
   return a.size === b.size && a.modified === b.modified;
@@ -133,6 +153,14 @@ class SessionTitleReader {
   constructor(options = {}) {
     this.claudeProjects = options.claudeProjects || paths.claudeProjects;
     this.codexSessionIndex = options.codexSessionIndex || paths.codexSessionIndex;
+    this.claudeDesktopSessions = options.claudeDesktopSessions || paths.claudeDesktopSessions;
+
+    // cliSessionId -> { file, modified, title, archived, lastActivity }, plus
+    // the modification date of every store file already accounted for, so a
+    // scan re-parses only what changed. These files carry the session's whole
+    // MCP tool roster and run to about 90 KB each.
+    this.desktopBySession = new Map();
+    this.desktopFileStamps = new Map();
 
     // sessionID -> { file, size, title }. The resolved path is cached because
     // finding it means listing the projects directory, and a transcript never
@@ -147,7 +175,13 @@ class SessionTitleReader {
   // The agent's own name for a session, or null when it has not named one.
   title(provider, sessionID) {
     if (!sessionID) return null;
-    if (provider === AgentProvider.claudeCode) return this.claudeTitle(sessionID);
+    if (provider === AgentProvider.claudeCode) {
+      // The desktop app first. Renaming a session there updates only its own
+      // store: the transcript keeps whatever title was appended to it earlier,
+      // so reading the transcript alone shows a name the user has already
+      // changed and cannot get rid of.
+      return this.desktopTitle(sessionID) || this.claudeTitle(sessionID);
+    }
     if (provider === AgentProvider.codex) return this.codexTitle(sessionID);
     return null;
   }
@@ -159,6 +193,96 @@ class SessionTitleReader {
     for (const key of Array.from(this.claudeCache.keys())) {
       if (!live.has(key)) this.claudeCache.delete(key);
     }
+    for (const key of Array.from(this.desktopBySession.keys())) {
+      if (!live.has(key)) this.desktopBySession.delete(key);
+    }
+    // Stamps are keyed by file, not by session, and a file dropped from the
+    // map is simply re-parsed the next time a scan needs it.
+    const known = new Set(Array.from(this.desktopBySession.values()).map((e) => e.file));
+    for (const key of Array.from(this.desktopFileStamps.keys())) {
+      if (!known.has(key)) this.desktopFileStamps.delete(key);
+    }
+  }
+
+  // Claude Code, as the desktop app records it.
+  //
+  // Layout is <workspace>/<project>/local_<uuid>.json, and each record carries
+  // the fields that matter here:
+  //
+  //   {"cliSessionId":"21922c07-…","title":"WAHA Infra","titleSource":"user",
+  //    "isArchived":false,"lastActivityAt":1788890634095}
+  //
+  // cliSessionId is the id the hook reports, which is what makes this joinable
+  // to a session at all. titleSource is "user" for a name typed in the session
+  // list and "auto" for one the app chose.
+  desktopTitle(sessionID) {
+    const entry = this.desktopBySession.get(sessionID);
+    if (entry) {
+      const stat = statOf(entry.file);
+      if (stat && stat.modified === entry.modified) return entry.title;
+      // The file changed under us, which is exactly what a rename looks like,
+      // so re-read that one file rather than the whole store.
+      this.desktopBySession.delete(sessionID);
+      this.desktopFileStamps.delete(entry.file);
+      const refreshed = this.readDesktopSession(entry.file);
+      if (refreshed && refreshed.id === sessionID) {
+        this.desktopBySession.set(refreshed.id, refreshed.entry);
+        return refreshed.entry.title;
+      }
+    }
+
+    this.scanDesktopStore();
+    const found = this.desktopBySession.get(sessionID);
+    return found ? found.title : null;
+  }
+
+  // Walks the store, parsing only files whose modification date has moved.
+  //
+  // A machine with no desktop app has no such directory and this is three
+  // failed directory reads; a CLI session on a machine that does have one
+  // costs a stat per file and no parsing at all.
+  scanDesktopStore() {
+    for (const workspace of readDirectory(this.claudeDesktopSessions)) {
+      for (const project of readDirectory(workspace)) {
+        for (const file of readDirectory(project)) {
+          if (!file.endsWith('.json')) continue;
+          const stat = statOf(file);
+          if (!stat) continue;
+          // Already accounted for: whatever mapping this file holds is in the
+          // index, so there is nothing to learn by parsing 90 KB of it again.
+          if (this.desktopFileStamps.get(file) === stat.modified) continue;
+          this.desktopFileStamps.set(file, stat.modified);
+          const read = this.readDesktopSession(file);
+          if (!read) continue;
+          const existing = this.desktopBySession.get(read.id);
+          if (existing && !supersedes(read.entry, existing)) continue;
+          this.desktopBySession.set(read.id, read.entry);
+        }
+      }
+    }
+  }
+
+  readDesktopSession(file) {
+    const stat = statOf(file);
+    if (!stat) return null;
+    let record;
+    try {
+      record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return null;
+    }
+    const id = record && nonEmpty(record.cliSessionId);
+    if (!id) return null;
+    return {
+      id,
+      entry: {
+        file,
+        modified: stat.modified,
+        title: nonEmpty(record.title),
+        archived: Boolean(record.isArchived),
+        lastActivity: typeof record.lastActivityAt === 'number' ? record.lastActivityAt : 0,
+      },
+    };
   }
 
   claudeTitle(sessionID) {

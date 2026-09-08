@@ -33,7 +33,28 @@ function readerFor(home) {
   return new SessionTitleReader({
     claudeProjects: path.join(home, '.claude', 'projects'),
     codexSessionIndex: path.join(home, '.codex', 'session_index.jsonl'),
+    claudeDesktopSessions: path.join(home, 'AppData', 'Roaming', 'Claude', 'claude-code-sessions'),
   });
+}
+
+// Writes one record where the Claude Code desktop app keeps its session list.
+//
+// Verbatim field names from a real store, trimmed to what the reader reads —
+// the real record also carries the session's whole MCP tool roster, which is
+// what makes these files about 90 KB each and worth not re-parsing.
+function writeDesktopSession(home, file, record) {
+  const directory = path.join(
+    home, 'AppData', 'Roaming', 'Claude', 'claude-code-sessions', 'ws-1', 'proj-1',
+  );
+  fs.mkdirSync(directory, { recursive: true });
+  const target = path.join(directory, file);
+  fs.writeFileSync(target, JSON.stringify({
+    titleSource: 'user',
+    isArchived: false,
+    lastActivityAt: 1788890634095,
+    ...record,
+  }), 'utf8');
+  return target;
 }
 
 function writeTranscript(home, slug, sessionID, lines) {
@@ -85,6 +106,80 @@ test('The last custom-title in a transcript wins', () => {
   ]);
 
   assert.strictEqual(readerFor(home).title(AgentProvider.claudeCode, session), 'Renamed by hand');
+});
+
+test('A session renamed in the desktop app takes the new name, not the transcript\'s', () => {
+  const home = makeTestHome();
+  const session = '21922c07-c5d7-4bf3-ab35-4e0fd739c5d5';
+
+  // The transcript keeps the title that was appended to it earlier. A rename
+  // typed in the session list never reaches it, so a reader that consults only
+  // the transcript shows a name the user already changed.
+  writeTranscript(home, '-Users-x-backend', session, [
+    customTitleRecord('Situação da infraestrutura WAHA', session),
+    aiTitleRecord('Explicar a situação da infraestrutura', session),
+  ]);
+  writeDesktopSession(home, 'local_a.json', { cliSessionId: session, title: 'WAHA Infra' });
+
+  assert.strictEqual(readerFor(home).title(AgentProvider.claudeCode, session), 'WAHA Infra');
+});
+
+test('A rename after the title was already read is picked up', () => {
+  const home = makeTestHome();
+  const session = 'aaaa1111-bbbb-2222-cccc-333333333333';
+  const file = writeDesktopSession(home, 'local_b.json', {
+    cliSessionId: session, title: 'Before the rename',
+  });
+
+  const reader = readerFor(home);
+  assert.strictEqual(reader.title(AgentProvider.claudeCode, session), 'Before the rename');
+
+  // A rename rewrites that one file, which is the only signal there is: no
+  // directory above it changes, and nothing is appended anywhere.
+  writeDesktopSession(home, 'local_b.json', { cliSessionId: session, title: 'After the rename' });
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(file, later, later);
+  assert.strictEqual(reader.title(AgentProvider.claudeCode, session), 'After the rename');
+});
+
+test('With no desktop store the transcript is still read', () => {
+  const home = makeTestHome();
+  const session = 'cccc4444-dddd-5555-eeee-666666666666';
+  // A CLI-only machine has no such directory at all.
+  writeTranscript(home, '-Users-x-cli2', session, [aiTitleRecord('Next.js CVE upgrade', session)]);
+
+  assert.strictEqual(
+    readerFor(home).title(AgentProvider.claudeCode, session),
+    'Next.js CVE upgrade',
+  );
+});
+
+test('A desktop record with no title falls through to the transcript', () => {
+  const home = makeTestHome();
+  const session = 'eeee7777-ffff-8888-9999-000000000000';
+  writeTranscript(home, '-Users-x-untitled', session, [
+    customTitleRecord('From the transcript', session),
+  ]);
+  writeDesktopSession(home, 'local_c.json', { cliSessionId: session });
+
+  assert.strictEqual(
+    readerFor(home).title(AgentProvider.claudeCode, session),
+    'From the transcript',
+  );
+});
+
+test('A live desktop record outranks an archived one for the same session', () => {
+  const home = makeTestHome();
+  const session = '12341234-5678-5678-9012-901290129012';
+  writeDesktopSession(home, 'local_archived.json', {
+    cliSessionId: session, title: 'The archived one', isArchived: true,
+    lastActivityAt: 9000000000000,
+  });
+  writeDesktopSession(home, 'local_live.json', {
+    cliSessionId: session, title: 'The live one', isArchived: false, lastActivityAt: 1000,
+  });
+
+  assert.strictEqual(readerFor(home).title(AgentProvider.claudeCode, session), 'The live one');
 });
 
 test('An ai-title names a session that has no custom-title', () => {

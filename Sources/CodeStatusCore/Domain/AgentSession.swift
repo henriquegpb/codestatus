@@ -196,8 +196,8 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
     public var repositoryName: String?
     public var workspaceName: String?
 
-    /// The name the agent gave this session itself — Claude Code's
-    /// `custom-title`, Codex's `thread_name`.
+    /// The name the agent has for this session — from Claude Code's session
+    /// list or its transcript, or Codex's `thread_name`.
     ///
     /// Enrichment, never identity. It arrives a turn or two after the session
     /// does, it never arrives at all for `codex exec`, and it is read from the

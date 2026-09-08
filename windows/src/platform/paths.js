@@ -69,6 +69,17 @@ const paths = {
     || path.join(home, '.claude', 'projects'),
   codexSessionIndex: process.env.CODESTATUS_CODEX_INDEX
     || path.join(home, '.codex', 'session_index.jsonl'),
+
+  // The Claude Code desktop app's own session list, which is where a rename
+  // typed in that list is stored — the transcript keeps whatever title was
+  // appended to it earlier. Electron's userData on Windows is %APPDATA%\<app>,
+  // the equivalent of ~/Library/Application Support/<app> on macOS.
+  claudeDesktopSessions: process.env.CODESTATUS_CLAUDE_DESKTOP_SESSIONS
+    || path.join(
+      process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+      'Claude',
+      'claude-code-sessions',
+    ),
 };
 
 function createDirectories() {
