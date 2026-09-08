@@ -32,8 +32,28 @@ private func writeTranscript(
     return url
 }
 
-private func titleRecord(_ title: String, session: String) -> String {
+/// The two title records Claude Code writes, in the verbatim shape they have
+/// on a real machine: same key order, same field names, same spelling of the
+/// type. Captured from live transcripts, with only the title text replaced —
+/// a real one is a model's description of somebody's work and does not belong
+/// in a repository.
+///
+/// Both are here because the first version of this reader knew about one of
+/// them, and both suites built their fixtures from that same assumption, so
+/// 375 tests agreed with each other and none of them agreed with a CLI-only
+/// machine. Fixtures that invent their own shape cannot catch that; these are
+/// the shapes the agent actually appends.
+private func customTitleRecord(_ title: String, session: String) -> String {
     "{\"type\":\"custom-title\",\"customTitle\":\"\(title)\",\"sessionId\":\"\(session)\"}"
+}
+
+private func aiTitleRecord(_ title: String, session: String) -> String {
+    "{\"type\":\"ai-title\",\"aiTitle\":\"\(title)\",\"sessionId\":\"\(session)\"}"
+}
+
+/// Kept as the name the older tests used, so what they assert is unchanged.
+private func titleRecord(_ title: String, session: String) -> String {
+    customTitleRecord(title, session: session)
 }
 
 /// A user record big enough to push earlier lines out of a tail read.
@@ -60,6 +80,54 @@ struct SessionTitleTests {
         #expect(reader.title(for: .claudeCode, sessionID: session) == "Renamed by hand")
     }
 
+    @Test("An ai-title names a session that has no custom-title")
+    func aiTitleIsRead() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "5a5a5a5a-6b6b-7c7c-8d8d-9e9e9e9e9e9e"
+        // A CLI-only machine looks exactly like this: 126 transcripts of it,
+        // and not one `custom-title` among them.
+        try writeTranscript(home: home, slug: "-Users-x-cli", sessionID: session, lines: [
+            "{\"type\":\"user\",\"text\":\"hello\"}",
+            aiTitleRecord("Next.js CVE upgrade", session: session),
+        ])
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "Next.js CVE upgrade")
+    }
+
+    @Test("A custom-title outranks an ai-title appended after it")
+    func customTitleWinsOverAiTitle() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "7f7f7f7f-8080-8181-8282-838383838383"
+        // The desktop app writes both, with different wording, and keeps
+        // appending both. The renamed one is what its session list shows, so
+        // position in the file must not decide this.
+        try writeTranscript(home: home, slug: "-Users-x-desktop", sessionID: session, lines: [
+            aiTitleRecord("Explicar fluxo de chat atual", session: session),
+            customTitleRecord("Fluxo de chat atual (fork)", session: session),
+            aiTitleRecord("Explicar fluxo de chat atual", session: session),
+        ])
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "Fluxo de chat atual (fork)")
+    }
+
+    @Test("An ai-title is used when the custom-title record carries nothing")
+    func emptyCustomTitleFallsThroughToAi() throws {
+        let home = try makeTestHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let session = "0a0a0a0a-0b0b-0c0c-0d0d-0e0e0e0e0e0e"
+        try writeTranscript(home: home, slug: "-Users-x-blank", sessionID: session, lines: [
+            aiTitleRecord("Upgrade the release pipeline", session: session),
+            customTitleRecord("   ", session: session),
+        ])
+
+        let reader = SessionTitleReader(home: home)
+        #expect(reader.title(for: .claudeCode, sessionID: session) == "Upgrade the release pipeline")
+    }
+
     @Test("A title is found without reading more than the tail of a huge transcript")
     func titleFoundInTail() throws {
         let home = try makeTestHome()
@@ -70,7 +138,10 @@ struct SessionTitleTests {
         // Claude Code actually keeps rewriting it.
         var lines = [titleRecord("Buried and stale", session: session)]
         for _ in 0..<32 { lines.append(filler(64 * 1024)) }
-        lines.append(titleRecord("Near the end", session: session))
+        // An `ai-title`, because that is the record a machine with no manual
+        // renames has, and it is the one whose distance from EOF was measured
+        // at worst 15.7 KB on a 49 MB transcript.
+        lines.append(aiTitleRecord("Near the end", session: session))
         lines.append(filler(8 * 1024))
         let url = try writeTranscript(home: home, slug: "-Users-x-big", sessionID: session, lines: lines)
 

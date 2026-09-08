@@ -512,26 +512,25 @@ final class SessionDaemon {
 
     private func tick() {
         let now = Date()
+        var titlesChanged = false
         ticksSinceReap += 1
         if ticksSinceReap >= Self.reapInterval {
             ticksSinceReap = 0
             reapDeadSessions()
             drainSpoolIfNotEmpty()
-            if refreshTitles() {
-                publish(now)
-                return
-            }
+            // Noted rather than published immediately: returning here would
+            // skip the prune below, leaving an ended session on screen past
+            // its grace period for one more tick.
+            titlesChanged = refreshTitles()
         }
         let removed = registry.pruneEnded(olderThan: endedLinger, now: now)
-        guard removed.isEmpty else {
-            publish(now)
-            return
-        }
         // The diagnosis depends on elapsed time, not just on registry changes:
         // a silent session crosses the settling period while nothing else
         // happens, and publish alone would never notice. Re-deriving it each
         // second is a walk over the handful of sessions that are not reporting.
-        if currentDiagnosis(now) != model.unreportedDiagnosis {
+        // Ordered so the cheap answers short-circuit it.
+        if !removed.isEmpty || titlesChanged
+            || currentDiagnosis(now) != model.unreportedDiagnosis {
             publish(now)
         } else {
             model.tick(now)

@@ -32,7 +32,12 @@ const TAIL_BYTES = 64 * 1024;
 
 // Cheap filter applied before any JSON parsing, so a multi-megabyte transcript
 // costs one substring search per line instead of a parse.
-const MARKER = '"custom-title"';
+//
+// Deliberately the shared suffix of both record type names rather than either
+// one of them: a filter naming only custom-title rejected every ai-title line
+// before it could be parsed, which is how a reader that resolved every session
+// on one machine resolved none on another.
+const TITLE_MARKER = '-title"';
 
 function statOf(file) {
   try {
@@ -48,9 +53,34 @@ function sameStamp(a, b) {
   return a.size === b.size && a.modified === b.modified;
 }
 
-// Scans the last TAIL_BYTES of a transcript backwards for the newest
-// custom-title record.
-function lastCustomTitle(file, size) {
+// A trimmed string, or null for anything not usable as a name.
+function nonEmpty(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+// Scans the last TAIL_BYTES of a transcript backwards for the newest title
+// record, preferring a custom-title over an ai-title.
+//
+// Claude Code writes two kinds, from two functions, with two field names —
+// verified in the 2.1.217 bundle:
+//
+//   saveCustomTitle:      {type:"custom-title", customTitle:t, sessionId:e}
+//   saveAiGeneratedTitle: {type:"ai-title",     aiTitle:t,     sessionId:e}
+//
+// Which of them a machine has depends on the surface. Across 100 transcripts
+// from the desktop app, 96 carried custom-title and 82 carried ai-title, 79
+// carrying both with different wording. A CLI-only machine was measured with
+// 126 transcripts and no custom-title at all. Reading one type is therefore
+// not a simplification; it is a reader that works on some installations and
+// silently names nothing on others.
+//
+// custom-title wins where both exist because it is the one the session list
+// shows: it tracks renames and carries the desktop app's own markers, such as
+// the (fork) suffix on a branched session. Preference rather than recency, so
+// an explicit rename cannot be buried by an automatic title appended after it.
+function lastTitle(file, size) {
   let fd;
   try {
     fd = fs.openSync(file, 'r');
@@ -71,19 +101,27 @@ function lastCustomTitle(file, size) {
     // any UTF-8 character the offset split down the middle with it.
     if (start > 0) lines.shift();
 
+    // Newest first, so the first record of a kind that we meet is that kind's
+    // current value. A custom-title ends the search outright; an ai-title is
+    // held in case no custom-title appears above it.
+    let aiTitle = null;
     for (let i = lines.length - 1; i >= 0; i -= 1) {
-      if (!lines[i].includes(MARKER)) continue;
+      if (!lines[i].includes(TITLE_MARKER)) continue;
       let record;
       try {
         record = JSON.parse(lines[i]);
       } catch {
         continue;
       }
-      if (!record || record.type !== 'custom-title') continue;
-      const title = typeof record.customTitle === 'string' ? record.customTitle.trim() : '';
-      return title || null;
+      if (!record) continue;
+      if (record.type === 'custom-title') {
+        const title = nonEmpty(record.customTitle);
+        if (title) return title;
+      } else if (record.type === 'ai-title' && aiTitle === null) {
+        aiTitle = nonEmpty(record.aiTitle);
+      }
     }
-    return null;
+    return aiTitle;
   } catch {
     return null;
   } finally {
@@ -132,7 +170,7 @@ class SessionTitleReader {
         // A transcript that outgrows the tail window carries its title out of
         // reach. Keeping the last one we saw is right: the session was named,
         // and nothing has told us it was renamed.
-        const title = lastCustomTitle(cached.file, stat.size) || cached.title;
+        const title = lastTitle(cached.file, stat.size) || cached.title;
         this.claudeCache.set(sessionID, { file: cached.file, size: stat.size, title });
         return title;
       }
@@ -149,7 +187,7 @@ class SessionTitleReader {
     const stat = statOf(file);
     if (!stat) return null;
 
-    const title = lastCustomTitle(file, stat.size);
+    const title = lastTitle(file, stat.size);
     this.claudeCache.set(sessionID, { file, size: stat.size, title });
     return title;
   }

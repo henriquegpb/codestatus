@@ -29,7 +29,12 @@ public final class SessionTitleReader {
 
     /// Cheap filter applied before any JSON parsing, so a multi-megabyte
     /// transcript costs one substring search per line instead of a parse.
-    private static let marker = Data("\"custom-title\"".utf8)
+    ///
+    /// Deliberately the shared suffix of both record type names rather than
+    /// either one of them: a filter naming only `custom-title` rejected every
+    /// `ai-title` line before it could be parsed, which is how a reader that
+    /// resolved every session on one machine resolved none on another.
+    private static let titleMarker = Data("-title\"".utf8)
 
     private let home: URL
     private let fileManager: FileManager
@@ -95,7 +100,7 @@ public final class SessionTitleReader {
             // A transcript that outgrows the tail window carries its title out
             // of reach. Keeping the last one we saw is right: the session was
             // named, and nothing has told us it was renamed.
-            let title = lastCustomTitle(in: cached.url, size: size) ?? cached.title
+            let title = lastTitle(in: cached.url, size: size) ?? cached.title
             claudeCache[sessionID] = ClaudeEntry(url: cached.url, size: size, title: title)
             return title
         }
@@ -113,7 +118,7 @@ public final class SessionTitleReader {
               let size = fileSize(of: url)
         else { return nil }
 
-        let title = lastCustomTitle(in: url, size: size)
+        let title = lastTitle(in: url, size: size)
         claudeCache[sessionID] = ClaudeEntry(url: url, size: size, title: title)
         return title
     }
@@ -141,8 +146,30 @@ public final class SessionTitleReader {
     }
 
     /// Scans the last ``tailBytes`` of a transcript backwards for the newest
-    /// `custom-title` record.
-    private func lastCustomTitle(in url: URL, size: UInt64) -> String? {
+    /// title record, preferring a `custom-title` over an `ai-title`.
+    ///
+    /// Claude Code writes two kinds, from two functions, with two field names
+    /// — verified in the 2.1.217 bundle:
+    ///
+    /// ```js
+    /// saveCustomTitle:      {type:"custom-title", customTitle:t, sessionId:e}
+    /// saveAiGeneratedTitle: {type:"ai-title",     aiTitle:t,     sessionId:e}
+    /// ```
+    ///
+    /// Which of them a machine has depends on the surface. Across 100
+    /// transcripts from the desktop app, 96 carried `custom-title` and 82
+    /// carried `ai-title`, 79 carrying both with different wording — `Fluxo de
+    /// chat atual` against `Explicar fluxo de chat atual`. A CLI-only machine
+    /// was measured with 126 transcripts and no `custom-title` at all. Reading
+    /// one type is therefore not a simplification; it is a reader that works
+    /// on some installations and silently names nothing on others.
+    ///
+    /// `custom-title` wins where both exist because it is the one the session
+    /// list shows: it tracks renames and carries the desktop app's own
+    /// markers, such as the `(fork)` suffix on a branched session. Preference
+    /// rather than recency, so an explicit rename cannot be buried by an
+    /// automatic title appended after it.
+    private func lastTitle(in url: URL, size: UInt64) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
@@ -157,16 +184,33 @@ public final class SessionTitleReader {
         // and half a JSON object is not something to hand to a parser.
         if offset > 0, !lines.isEmpty { lines.removeFirst() }
 
+        // Newest first, so the first record of a kind that we meet is that
+        // kind's current value. A `custom-title` ends the search outright; an
+        // `ai-title` is held in case no `custom-title` appears above it.
+        var aiTitle: String?
         for line in lines.reversed() {
-            guard line.range(of: Self.marker) != nil else { continue }
+            guard line.range(of: Self.titleMarker) != nil else { continue }
             guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-                  object["type"] as? String == "custom-title",
-                  let title = object["customTitle"] as? String
+                  let type = object["type"] as? String
             else { continue }
-            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+
+            switch type {
+            case "custom-title":
+                if let title = Self.nonEmpty(object["customTitle"]) { return title }
+            case "ai-title":
+                if aiTitle == nil { aiTitle = Self.nonEmpty(object["aiTitle"]) }
+            default:
+                continue
+            }
         }
-        return nil
+        return aiTitle
+    }
+
+    /// A trimmed string, or `nil` for anything that is not usable as a name.
+    private static func nonEmpty(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Codex

@@ -251,6 +251,11 @@ class Daemon extends EventEmitter {
   // is the honest order — we did not know it yet.
   refreshLabels() {
     let changed = false;
+    // Tracked apart from `changed` because only one of the two is written
+    // down: repositoryName is in the snapshot and has to survive a restart,
+    // while sessionTitle is deliberately not, so a title-only sweep must not
+    // schedule a write.
+    let persistedChanged = false;
     const live = new Set();
 
     for (const session of this.registry.all) {
@@ -262,6 +267,7 @@ class Daemon extends EventEmitter {
           session.gitRoot = root;
           session.repositoryName = path.basename(root);
           changed = true;
+          persistedChanged = true;
         }
       }
 
@@ -277,6 +283,7 @@ class Daemon extends EventEmitter {
 
     this.titles.prune(live);
     if (changed) this.emit('effects', [{ type: 'labelsRefreshed' }], this.snapshot());
+    if (persistedChanged) this.schedulePersist();
   }
 
   // MARK: - Process discovery

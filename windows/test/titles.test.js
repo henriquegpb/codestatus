@@ -44,8 +44,28 @@ function writeTranscript(home, slug, sessionID, lines) {
   return file;
 }
 
-function titleRecord(title, session) {
+// The two title records Claude Code writes, in the verbatim shape they have on
+// a real machine: same key order, same field names, same spelling of the type.
+// Captured from live transcripts, with only the title text replaced — a real
+// one is a model's description of somebody's work and does not belong in a
+// repository.
+//
+// Both are here because the first version of this reader knew about one of
+// them, and both suites built their fixtures from that same assumption, so 375
+// tests agreed with each other and none of them agreed with a CLI-only
+// machine. Fixtures that invent their own shape cannot catch that; these are
+// the shapes the agent actually appends.
+function customTitleRecord(title, session) {
   return JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: session });
+}
+
+function aiTitleRecord(title, session) {
+  return JSON.stringify({ type: 'ai-title', aiTitle: title, sessionId: session });
+}
+
+// Kept as the name the older tests used, so what they assert is unchanged.
+function titleRecord(title, session) {
+  return customTitleRecord(title, session);
 }
 
 // A user record big enough to push earlier lines out of a tail read.
@@ -67,13 +87,64 @@ test('The last custom-title in a transcript wins', () => {
   assert.strictEqual(readerFor(home).title(AgentProvider.claudeCode, session), 'Renamed by hand');
 });
 
+test('An ai-title names a session that has no custom-title', () => {
+  const home = makeTestHome();
+  const session = '5a5a5a5a-6b6b-7c7c-8d8d-9e9e9e9e9e9e';
+  // A CLI-only machine looks exactly like this: 126 transcripts of it, and not
+  // one custom-title among them.
+  writeTranscript(home, '-Users-x-cli', session, [
+    JSON.stringify({ type: 'user', text: 'hello' }),
+    aiTitleRecord('Next.js CVE upgrade', session),
+  ]);
+
+  assert.strictEqual(
+    readerFor(home).title(AgentProvider.claudeCode, session),
+    'Next.js CVE upgrade',
+  );
+});
+
+test('A custom-title outranks an ai-title appended after it', () => {
+  const home = makeTestHome();
+  const session = '7f7f7f7f-8080-8181-8282-838383838383';
+  // The desktop app writes both, with different wording, and keeps appending
+  // both. The renamed one is what its session list shows, so position in the
+  // file must not decide this.
+  writeTranscript(home, '-Users-x-desktop', session, [
+    aiTitleRecord('Explicar fluxo de chat atual', session),
+    customTitleRecord('Fluxo de chat atual (fork)', session),
+    aiTitleRecord('Explicar fluxo de chat atual', session),
+  ]);
+
+  assert.strictEqual(
+    readerFor(home).title(AgentProvider.claudeCode, session),
+    'Fluxo de chat atual (fork)',
+  );
+});
+
+test('An ai-title is used when the custom-title record carries nothing', () => {
+  const home = makeTestHome();
+  const session = '0a0a0a0a-0b0b-0c0c-0d0d-0e0e0e0e0e0e';
+  writeTranscript(home, '-Users-x-blank', session, [
+    aiTitleRecord('Upgrade the release pipeline', session),
+    customTitleRecord('   ', session),
+  ]);
+
+  assert.strictEqual(
+    readerFor(home).title(AgentProvider.claudeCode, session),
+    'Upgrade the release pipeline',
+  );
+});
+
 test('A title is found without reading more than the tail of a huge transcript', () => {
   const home = makeTestHome();
   const session = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
   const lines = [titleRecord('Buried and stale', session)];
   for (let i = 0; i < 32; i += 1) lines.push(filler(64 * 1024));
-  lines.push(titleRecord('Near the end', session));
+  // An ai-title, because that is the record a machine with no manual renames
+  // has, and it is the one whose distance from EOF was measured at worst
+  // 15.7 KB on a 49 MB transcript.
+  lines.push(aiTitleRecord('Near the end', session));
   lines.push(filler(8 * 1024));
   const file = writeTranscript(home, '-Users-x-big', session, lines);
 

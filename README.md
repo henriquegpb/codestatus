@@ -94,8 +94,10 @@ directory, git root, workspace name, and host application.
 
 One thing is read outside that channel, and it is worth being precise about. To label a row with
 the name a session actually has — `Calendar fix` rather than a third row reading `backend` — the
-app reads the newest `custom-title` record from Claude Code's own transcript, and `thread_name`
-from Codex's session index. That happens in the app, not in the hook: `transcript_path` stays off
+app reads the newest title record from Claude Code's own transcript — `custom-title` where the
+session has one, `ai-title` otherwise, since which of the two a machine has depends on whether
+you drive Claude Code from the desktop app or the CLI — and `thread_name` from Codex's session
+index. That happens in the app, not in the hook: `transcript_path` stays off
 the hook's allowlist, and nothing about it crosses the socket. Only the title is kept; the bytes
 read to find it are searched and dropped.
 
