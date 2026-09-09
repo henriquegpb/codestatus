@@ -334,10 +334,16 @@ class Daemon extends EventEmitter {
   // The macOS Refresh re-scans processes; this does the same, plus a spool
   // drain, because on Windows the spool is the path a hook takes whenever the
   // app was not listening — including the seconds right after launch.
+  // Labels otherwise move only on their own ten-second timer, which makes
+  // Refresh look broken in the one case somebody actually reaches for it: a
+  // session has just been named and they want the name now. The reads are
+  // cached against file size and modification date, so a press that finds
+  // nothing new costs a stat per session.
   async refresh() {
     this.drainSpool();
     this.checkLiveness();
     await this.scanForAgents();
+    this.refreshLabels();
     this.emit('effects', [{ type: 'refreshed' }], this.snapshot());
   }
 

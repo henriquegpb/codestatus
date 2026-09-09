@@ -597,6 +597,12 @@ final class SessionDaemon {
         // reaching for it — a row cleared away by accident — and it would fail
         // silently, since a suppressed session looks exactly like no session.
         dismissed.removeAll()
+        // Titles otherwise move only on the ten-second tick, which makes
+        // Refresh look broken in the one case somebody actually reaches for it:
+        // a session has just been named and they want the name now. The reads
+        // are cached against file size, so a press that finds nothing new costs
+        // a `stat` per session.
+        _ = refreshTitles()
         processWatcher?.resync()
         publish()
     }
