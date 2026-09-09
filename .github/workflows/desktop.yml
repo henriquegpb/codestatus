@@ -236,10 +236,12 @@ jobs:
           dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             /opt/CodeStatus/codestatus --no-sandbox > /tmp/app.log 2>&1 &
           echo $! > /tmp/app.pid
-          # Past the four periodic timers, one of which once crashed the app
-          # four seconds into every launch.
+          # Waits on the pointer, not on a socket path guessed here. Where the
+          # socket goes depends on $XDG_RUNTIME_DIR, which the runner has and a
+          # container may not -- and the hook has the same problem, which is the
+          # entire reason the pointer exists and lives somewhere stable.
           for i in $(seq 1 30); do
-            [ -S "$HOME/.local/share/CodeStatus/run/daemon.sock" ] && break
+            [ -f "$HOME/.local/share/CodeStatus/run/pipe-name" ] && break
             sleep 1
           done
           sleep 12
@@ -250,11 +252,17 @@ jobs:
       - name: Assert it set itself up
         run: |
           run="$HOME/.local/share/CodeStatus/run"
-          test -S "$run/daemon.sock" || { echo "no socket"; cat /tmp/app.log; exit 1; }
-          [ "$(stat -c%a "$run/daemon.sock")" = "600" ] || { echo "socket is $(stat -c%a "$run/daemon.sock")"; exit 1; }
+          test -f "$run/pipe-name" || { echo "no pointer"; cat /tmp/app.log; exit 1; }
+          sock=$(cat "$run/pipe-name")
+          echo "pointer names $sock"
+          # The claim the design rests on: the pointer is in a directory both
+          # programs can always compute, and it names a socket that is really
+          # there. On this runner XDG_RUNTIME_DIR is set, so that is not the
+          # same directory -- which is the case worth catching.
+          test -S "$sock" || { echo "the pointer names no socket"; cat /tmp/app.log; exit 1; }
+          [ "$(stat -c%a "$sock")" = "600" ] || { echo "socket is $(stat -c%a "$sock")"; exit 1; }
           [ "$(stat -c%a "$HOME/.local/share/CodeStatus/state")" = "700" ] || exit 1
-          [ "$(cat "$run/pipe-name")" = "$run/daemon.sock" ] || { echo "pointer disagrees"; exit 1; }
-          echo "socket 0600, dirs 0700, pointer agrees"
+          echo "socket 0600, dirs 0700, pointer resolves"
 
       # The whole point. An event goes in through the exact chain Claude Code
       # will use -- /usr/bin/env, the installed binary as a Node interpreter, the
