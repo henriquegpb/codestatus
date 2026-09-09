@@ -59,7 +59,7 @@ serves both Windows and Linux. The two share no build, no dependency, and no run
 |---|---|---|---|
 | Where | repository root | [`desktop/`](desktop/) | [`desktop/`](desktop/) |
 | Built with | Swift 6, AppKit/SwiftUI | Node.js, Electron | Node.js, Electron |
-| Status | in daily use | ported, needs hardware verification | ported, needs hardware verification |
+| Status | in daily use | ported, needs hardware verification | installs and runs in CI; the tray needs eyes |
 | Agents | Claude Code, Codex | Claude Code | Claude Code |
 
 ```

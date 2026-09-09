@@ -1,15 +1,19 @@
 # Spike 14 & 15 — the Linux desktop: a tray to draw in, and a window to raise
 
-- **Spike 14 (a tray icon on the common desktops):** partial — the mechanism is known and
-  implemented; it has not been run on a Linux machine.
-- **Spike 15 (returning to a session):** partial — the X11 path is implemented and the Wayland
-  answer is settled by the protocol rather than by measurement; neither has been run on hardware.
+- **Spike 14 (a tray icon on the common desktops):** partial — the app runs on Linux and
+  constructs its tray without dying, under a session bus with libayatana-appindicator present.
+  Whether the icon then *appears* on GNOME, KDE or XFCE has still not been seen, because CI has
+  no panel to draw it on.
+- **Spike 15 (returning to a session):** done for X11 — verified end to end on Linux: the window
+  is found by pid, activated through an EWMH window manager, and the foreground window afterwards
+  is confirmed to belong to the target process. Wayland is settled by the protocol rather than by
+  measurement, which is as settled as it can be.
 
-Both are **partial**, and the distinction matters more here than in most of these records. What
-is settled is settled by specification: Wayland has no protocol for this, and that is readable
-from the protocol rather than something a test could contradict. What is *not* settled is how
-each desktop behaves in practice, and nothing below was observed on a running Linux session.
-Treat the capability matrix as a prediction until somebody boots it.
+The record below was originally written with nothing having run on Linux at all. That changed:
+the CI `smoke` job now installs the .deb on Ubuntu, launches the app under Xvfb and a session
+bus, and drives an event through the invocation it wrote into settings.json. What that job
+proves is marked inline. What it still cannot reach is a panel and a compositor, so the tray
+row of the capability matrix remains a prediction.
 
 ## Hypothesis
 
@@ -171,22 +175,42 @@ is no API because Linux has no login-item registry — it has the XDG autostart 
 every desktop listed above, which is a `.desktop` file in `~/.config/autostart`. So the seam
 writes one, and refuses when the only path it could name is inside an AppImage mount.
 
+## What running it on Linux settled
+
+The `smoke` job in `.github/workflows/desktop.yml` installs the package and drives the installed
+app. It now covers, on Ubuntu:
+
+- **The package installs.** `apt` resolves the dependencies electron-builder declared against a
+  machine that has none of them, and puts the binary and the hook where the hook entry will name
+  them. The first attempt at a Linux release failed here, for the most ordinary reason available:
+  fpm needs a maintainer for a `.deb`, NSIS never did, so nothing had ever set one.
+- **The app starts and stays up**, past the four periodic timers — the trap that once crashed
+  every launch four seconds in.
+- **The `$XDG_RUNTIME_DIR` split is real rather than theoretical.** The runner has that variable,
+  so the socket goes to `/run/user/<uid>/CodeStatus/` while the pointer stays in the data
+  directory, and the pointer resolves. The first version of the test guessed the socket path
+  instead of reading the pointer and failed — making exactly the mistake the pointer exists to
+  stop the hook from making.
+- **An event survives the whole installed chain.** The command and argument vector are read back
+  out of the `settings.json` the installer wrote, not written by the test, and the session
+  appears in the running app's snapshot with the prompt that rode in on it absent.
+- **A window can be raised by pid**, and it is the right one: the foreground window afterwards is
+  confirmed to belong to the process asked for.
+
 ## Limitations
 
-Restating the ones that decide whether to believe any of this:
+Restating the ones that decide whether to believe the rest:
 
-1. **Nothing here ran on Linux.** No libappindicator, no panel, no compositor, no `xdotool`, no
-   `/proc`, no `.deb` or `.rpm` installed. The pure functions are tested and the socket and
-   invocation chain were exercised on macOS; the platform itself was not.
-2. **The tray matrix is a prediction.** Which desktops show the icon, and whether it is legible
-   at their scaling, is exactly the kind of claim this directory refuses to make from
-   documentation — and it is being made from documentation.
+1. **No panel, no compositor.** The app draws a tray icon and nothing in CI can display one, so
+   "the icon appears on GNOME with the extension, and on KDE without it" is still read from
+   documentation. This is the gap that most needs a person with a laptop.
+2. **X11 only.** The focus path is verified under Xvfb, which is X11. The Wayland answer is a
+   protocol fact rather than a measurement, and the XWayland middle case is untested.
 3. **The popover corner is a heuristic.** Panel position inferred from reserved space is right on
    every configuration considered and is not something the platform confirms, unlike the Windows
    path where the tray reports its own bounds.
-4. **Packaging is unexercised.** `electron-builder --linux` has not been run; the `.deb` and
-   `.rpm` names the release workflow copies to stable filenames are taken from
-   electron-builder's arch conventions rather than from a build that produced them.
+4. **No real agent.** The event delivered through the installed chain is a synthetic payload. A
+   Claude Code session has never driven this build on Linux.
 5. **Codex is not ported**, here as on Windows.
 
 ## Architectural decisions
@@ -211,5 +235,6 @@ Linux moves from "not supported" to shipped-with-stated-limits. On Ubuntu, KDE o
 it is the Windows build's equal. On Fedora GNOME under Wayland it is a notifier that cannot
 always take you back, and both halves of that are visible in the app rather than in a bug report.
 
-The next thing worth doing is not more Linux code. It is booting it on one machine per row of the
-matrix and turning four **partial** claims into **done** ones — or into corrections.
+The next thing worth doing is still not more Linux code. It is opening it on one machine per row
+of the tray matrix — the one claim CI cannot reach — and pointing a real Claude Code session at
+it.
