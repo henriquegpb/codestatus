@@ -31,6 +31,7 @@ export const SITE = {
     macos: {
       label: "Download for macOS",
       icon: "/Apple.svg",
+      iconClass: "size-4",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg",
       requirements: "macOS 14 or later",
       alt: null,
@@ -39,6 +40,7 @@ export const SITE = {
     windows: {
       label: "Download for Windows",
       icon: "/Windows.svg",
+      iconClass: "size-4",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe",
       requirements: "Windows 10 or later",
       /**
@@ -65,6 +67,17 @@ export const SITE = {
     linux: {
       label: "Download for Linux",
       icon: "/Linux.svg",
+      /**
+       * Larger than the other two, to look the same size.
+       *
+       * The masks are fitted with `contain`, so a logo only fills the box it is
+       * given if it is square. Windows is `0 0 4875 4875` and does. Tux is
+       * `0 0 266 312`, so at a 16px box he is fitted to the height and comes
+       * out 13.6px wide — and a tapered penguin already reads lighter than four
+       * solid squares. This is the optical correction, and it belongs next to
+       * the asset that needs it rather than in the component that lays it out.
+       */
+      iconClass: "size-[1.15rem]",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.deb",
       requirements: "Debian, Ubuntu, Mint, Pop!_OS",
       /** Everything that is not Debian-derived. */

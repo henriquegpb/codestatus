@@ -89,14 +89,14 @@ export function DownloadButtons({
           href={mine.url}
           label={mine.label}
           variant="primary"
-          icon={<PlatformIcon src={mine.icon} />}
+          icon={<PlatformIcon src={mine.icon} className={mine.iconClass} />}
         />
         {others.map((build) => (
           <IconSwapButton
             key={build.url}
             href={build.url}
             label={build.label}
-            icon={<PlatformIcon src={build.icon} />}
+            icon={<PlatformIcon src={build.icon} className={build.iconClass} />}
           />
         ))}
         <IconSwapButton
