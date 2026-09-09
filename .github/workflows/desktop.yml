@@ -200,7 +200,7 @@ jobs:
       - name: Install a desktop
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libayatana-appindicator3-1 xdotool x11-utils xterm
+          sudo apt-get install -y xvfb dbus-x11 libayatana-appindicator3-1 xdotool x11-utils xterm openbox
 
       # The real thing: apt resolves the dependencies electron-builder declared,
       # against a machine that has none of them yet.
@@ -295,20 +295,42 @@ jobs:
       # Raising a window is the one capability Linux may not have. Under Xvfb
       # this is X11, so it is the path that can work -- and if xdotool cannot
       # find a window by pid here, it cannot on a user's X11 session either.
+      #
+      # A window manager is not scenery. xdotool's windowactivate asks for the
+      # window through _NET_ACTIVE_WINDOW, which is an EWMH message only a
+      # window manager answers, so a bare X server would fail this for a reason
+      # no user would ever hit. openbox is the smallest thing that answers it.
       - name: Raise a window by pid
         run: |
-          export DISPLAY=:99
-          Xvfb :99 -screen 0 1280x1024x24 & sleep 2
-          xterm -e "sleep 60" & xt=$!
-          sleep 3
+          cat > /tmp/focus-check.sh <<'EOS'
+          set -e
+          openbox &
+          sleep 2
+          xterm -e "sleep 120" &
+          xt=$!
+          # The window appears a moment after the process does.
+          for i in $(seq 1 20); do
+            xdotool search --pid $xt >/dev/null 2>&1 && break
+            sleep 1
+          done
           node -e "
             const { focusProcessWindow, focusCapability } = require('./src/platform/linux/focus');
             console.log('capability:', JSON.stringify(focusCapability()));
-            focusProcessWindow($xt, (ok) => {
+            const target = Number(process.argv[1]);
+            focusProcessWindow(target, (ok) => {
               console.log('raised:', ok);
-              process.exit(ok ? 0 : 1);
+              if (!ok) process.exit(1);
+              // Asserting it is really the one in front, not merely that the
+              // call returned. Raising the wrong window, or none, is the whole
+              // failure mode this is here to rule out.
+              const active = require('child_process')
+                .execSync('xdotool getactivewindow getwindowpid').toString().trim();
+              console.log('the foreground window belongs to', active);
+              process.exit(Number(active) === target ? 0 : 1);
             });
-          "
+          " $xt
+          EOS
+          xvfb-run -n 95 --server-args="-screen 0 1280x1024x24" bash /tmp/focus-check.sh
 
       - name: Stop the app
         if: always()
