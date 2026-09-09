@@ -2,6 +2,11 @@
   "name": "codestatus-desktop",
   "version": "0.5.1",
   "description": "Session monitor for Claude Code, in the Windows system tray and the Linux panel",
+  "homepage": "https://codestatus.dev",
+  "author": {
+    "name": "Henrique Barone",
+    "email": "henrique@stellaai.com.br"
+  },
   "main": "src/main.js",
   "license": "MIT",
   "private": true,

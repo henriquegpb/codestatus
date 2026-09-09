@@ -104,3 +104,75 @@ jobs:
             echo "a runtime dependency was added"
             exit 1
           fi
+
+  package:
+    # Builds the Linux packages on every push, not only on a tag.
+    #
+    # The first tagged release of the Linux build failed here, and failed in the
+    # most ordinary way possible: fpm needs a maintainer and a homepage for a
+    # .deb, which NSIS never asked for, so nothing had ever supplied them. The
+    # release published the macOS and Windows artifacts anyway and left the
+    # website pointing at a .deb that did not exist.
+    #
+    # A packaging step that only ever runs during a release is a packaging step
+    # whose failures are all discovered in public. This one runs first, and the
+    # artifacts it leaves are also the answer to "send me a build to try"
+    # without cutting a release to do it.
+    #
+    # macOS cannot stand in: electron-builder's bundled fpm for Mac is from 2015
+    # and writes a 96-byte file it calls a .deb, reporting success.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build the packages
+        run: npm run dist:linux
+
+      # Asserts they are packages rather than files with the right extension,
+      # which is exactly the shape the local build produced. dpkg-deb reads the
+      # control archive, so it fails on anything that is not really a .deb, and
+      # the size floor catches a package that unpacked to nothing.
+      - name: Assert the packages are real
+        run: |
+          cd dist
+          ls -la
+          for f in *.deb; do
+            echo "== $f"
+            dpkg-deb -I "$f"
+            size=$(stat -c%s "$f")
+            [ "$size" -gt 40000000 ] || { echo "$f is only $size bytes"; exit 1; }
+          done
+          for f in *.rpm; do
+            echo "== $f"
+            rpm -qip "$f"
+          done
+
+      # The .deb names the file Claude Code will be told to run, so it has to be
+      # in the package rather than merely in the repository. Silence here is the
+      # failure this whole app is built to avoid.
+      - name: Assert the hook shipped inside the package
+        run: |
+          cd dist
+          deb=$(ls *-amd64.deb | head -1)
+          dpkg-deb -c "$deb" | grep -E "resources/hook/hook\.js$" \
+            || { echo "hook.js is not in the package"; exit 1; }
+          dpkg-deb -c "$deb" | grep -E "/opt/CodeStatus/codestatus$" \
+            || { echo "the executable is not where the hook entry will point"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            desktop/dist/*.deb
+            desktop/dist/*.rpm
+          retention-days: 30
