@@ -304,6 +304,38 @@ test('linux: boot time is read from /proc/stat and converted to epoch millisecon
   assert.strictEqual(linuxScan.bootTimeMillis(procRoot), 1_700_000_000_000);
 });
 
+// The only case here that needs the kernel it describes, and it earns the
+// exception. Everything else about the scan is checked against fixtures, which
+// proves the parser and proves nothing about /proc actually being shaped the
+// way the parser expects — the field offsets, the comm truncation, btime being
+// present at all. This is the app's answer to "an agent is running and telling
+// you nothing", which is the most confusing state it can be in, so the claim
+// that it can read the process table should be a fact somewhere.
+if (process.platform === 'linux') {
+  test('linux: the real /proc yields this process, with a sane start time', () => {
+    return linuxScan.scan().then(({ tree, failed }) => {
+      assert.strictEqual(failed, false, '/proc could not be read');
+      assert.ok(tree.size > 1, 'the process table came back essentially empty');
+
+      const self = tree.get(process.pid);
+      assert.ok(self, 'the running process is not in its own scan');
+      assert.strictEqual(self.parentPID, process.ppid);
+      // comm is the executable name truncated to fifteen characters, so this is
+      // the prefix rather than the whole of it.
+      assert.ok('node'.startsWith(self.name) || self.name.startsWith('node'), self.name);
+
+      // Start times are what the unreported diagnosis compares against the
+      // moment the hooks were installed, so being on the wall clock at all is
+      // the property that matters — a value measured from boot and left there
+      // would put every session hours in the past and read as "predates the
+      // hooks" for ever.
+      const boot = linuxScan.bootTimeMillis();
+      assert.ok(boot !== null && boot > 0, 'btime was unreadable');
+      assert.ok(boot < Date.now(), 'the machine booted in the future');
+    });
+  });
+}
+
 test('linux: a scan with no /proc reports failure rather than an empty machine', () => {
   // "We could not look" and "nothing is there" are different answers, and the
   // popover says which. This is also the path the suite takes on a Mac.
