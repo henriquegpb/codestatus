@@ -4,18 +4,19 @@
 
 **Stop watching AI work.**
 
-A macOS menu bar app that tracks every Claude Code and Codex session on your Mac and tells you
-the moment one finishes, needs approval, or is waiting on you. A native presence layer for coding
-agents: start several, keep working, and come back only when one is actually done or actually
-needs you.
+A menu bar, tray and panel app that tracks every Claude Code and Codex session on your machine
+and tells you the moment one finishes, needs approval, or is waiting on you. A native presence
+layer for coding agents: start several, keep working, and come back only when one is actually
+done or actually needs you.
 
 <img src="website/public/DemoMenubar.png" width="640" alt="The CodeStatus menu bar popover: three sessions with their provider, state, and elapsed time, a note that three more are not reporting yet, and Refresh, Settings and Quit along the bottom.">
 
 [**Download for macOS**](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg) ·
 [Download for Windows](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe) ·
+[Download for Linux](https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.deb) ·
 [codestatus.dev](https://codestatus.dev)
 
-macOS 14 or later · Windows 10 or later · MIT · no account, no server, no telemetry
+macOS 14 or later · Windows 10 or later · Linux · MIT · no account, no server, no telemetry
 
 </div>
 
@@ -27,7 +28,7 @@ You run Claude Code in one terminal, Codex in another, maybe a third in VS Code.
 the next twenty minutes tabbing between them asking "is it done yet?".
 
 CodeStatus answers that without you looking. It tracks every Claude Code and Codex session on
-your Mac, works out whether each one is *working*, *free*, *waiting for your approval*,
+your machine, works out whether each one is *working*, *free*, *waiting for your approval*,
 *waiting for an answer*, or *failed*, and shows the counts in the menu bar — with a
 sound and a notification the moment one needs you.
 
@@ -51,36 +52,54 @@ session finished because it went quiet.
 
 ## Platforms
 
-Two apps, one repository. They are separate implementations of the same product and share no
-build, no dependency, and no runtime.
+Two apps, one repository. The macOS app is Swift and native; the other is Node and Electron and
+serves both Windows and Linux. The two share no build, no dependency, and no runtime.
 
-| | macOS | Windows |
-|---|---|---|
-| Where | repository root | [`windows/`](windows/) |
-| Built with | Swift 6, AppKit/SwiftUI | Node.js, Electron |
-| Status | in daily use | ported, needs hardware verification |
-| Agents | Claude Code, Codex | Claude Code |
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Where | repository root | [`desktop/`](desktop/) | [`desktop/`](desktop/) |
+| Built with | Swift 6, AppKit/SwiftUI | Node.js, Electron | Node.js, Electron |
+| Status | in daily use | ported, needs hardware verification | ported, needs hardware verification |
+| Agents | Claude Code, Codex | Claude Code | Claude Code |
 
 ```
 Package.swift  Sources/  Tests/  scripts/  Resources/   ← macOS
-windows/                                                ← Windows
+desktop/                                                ← Windows and Linux
 website/  docs/                                         ← shared
 ```
 
 The macOS app is the reference implementation: the state machine, the event vocabulary, and the
 honesty rules are defined there and ported. What keeps the two from drifting is that the test
 suites are written as the same cases in both languages — see
-[windows/README.md](windows/README.md#two-apps-one-repository), which explains how that drift
+[desktop/README.md](desktop/README.md#two-apps-one-repository), which explains how that drift
 happened once already and what it cost.
 
-Linux is not supported. The port is cheap — Node's `net` gives Unix sockets with the same API,
-and `src/core/` has no platform in it — but GNOME removed the system tray and Wayland has no way
-to raise another application's window, so the premise of the app is only half available on the
-most common desktop.
+Windows and Linux are one app rather than two because they are the same language and the same
+runtime: a fork would mean a third copy of the state machine, and the second copy is what caused
+the drift that section describes. What differs between them lives in `desktop/src/platform/`,
+seven small files per platform, and CI fails the build if a `process.platform` check appears
+outside it.
+
+### What Linux costs
+
+The engine ports cleanly — `/proc` is a better process table than either of the others, and a
+Unix socket is what the macOS app already uses. Two things do not, and both are stated in the app
+rather than discovered:
+
+- **GNOME has no system tray.** It was removed from the shell in 3.26. Ubuntu ships the
+  AppIndicator extension enabled and the icon appears; on Fedora or vanilla GNOME you install it
+  or you see nothing. KDE, XFCE, Cinnamon, MATE and Budgie all have one.
+- **Wayland cannot raise another application's window.** Deliberately — it is how it stops apps
+  stealing focus. Terminals running through XWayland still can be, which is most of them, and
+  the rest fall back to opening the project folder.
+
+So on Ubuntu, KDE or XFCE under X11 it is the Windows build's equal. On Fedora GNOME under
+Wayland it is a notifier that cannot always take you back. See
+[the matrix](desktop/README.md#what-works-on-which-desktop).
 
 ## Privacy
 
-Everything happens on your Mac. There is no account, no server, no telemetry, and no network
+Everything happens on your own machine. There is no account, no server, no telemetry, and no network
 code in the product at all.
 
 The privacy guarantee is structural rather than a promise. The hook binary that agents invoke

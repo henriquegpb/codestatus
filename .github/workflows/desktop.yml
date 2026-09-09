@@ -1,0 +1,106 @@
+name: Desktop
+
+# The Electron app is a separate deliverable from the macOS one: different
+# language, different runtime, nothing shared at build time. It gets its own
+# workflow so a change to either cannot burn a runner for the other.
+#
+# One app, two platforms, and the matrix is the point rather than a convenience.
+# Almost everything in src/platform/ is a pure function or a filesystem call, so
+# both seams are exercised on whichever runner is running — and each runner then
+# proves the one thing only it can, which is that the transport and the hook
+# chain are reachable on the kernel underneath.
+on:
+  push:
+    branches: [main]
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: desktop
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The unit suites need nothing installed: they are plain Node against
+      # source with no dependencies, which is the point of keeping src/core/
+      # free of the operating system and of Electron. The installer suite runs
+      # twice on each runner, once per platform seam.
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Needs Electron, which is the only dependency in the project and is
+      # ~370 MB. Installed after the cheap suites have already had their say.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The transport suite starts a real daemon and runs the hook the way
+      # Claude Code would. It is the only place the privacy guarantee is checked
+      # against the bytes on the wire rather than in the abstract, and the only
+      # place the production invocation chain is executed rather than asserted:
+      # cmd.exe and the generated shim on Windows, /usr/bin/env on Linux.
+      - name: Transport integration test
+        run: npm run test:transport
+
+  structure:
+    # Claims about how the app is put together, rather than about what it does.
+    # One runner is enough: none of them depend on the operating system.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The macOS side asserts the hook binary does not link Foundation. The
+      # equivalent structural claim here is that the hook stands alone: Claude
+      # Code spawns it by absolute path, and it has to keep working when the
+      # rest of the install is half-updated or broken.
+      - name: Assert the hook has no imports from the app
+        run: |
+          if grep -nE "require\((['\"])\.\." hook/hook.js; then
+            echo "hook.js imports from the app tree; see the note at the top of the file"
+            exit 1
+          fi
+
+      # The seam is the thing that keeps a third platform cheap, and it only
+      # holds while nothing outside src/platform/ knows which one it is on.
+      # A process.platform check in the daemon, the installer or the core is how
+      # that erodes — one branch at a time, each reasonable on its own.
+      #
+      # src/main.js is exempt: it draws the tray and the windows, and those
+      # genuinely differ. The list is deliberately short so that adding to it is
+      # a decision somebody makes rather than a thing that happens.
+      - name: Assert the platform seam is not leaking
+        run: |
+          offenders=$(grep -rn "process\.platform" src/core src/daemon src/install || true)
+          if [ -n "$offenders" ]; then
+            echo "$offenders"
+            echo "these belong behind src/platform/, not in the platform-free tree"
+            exit 1
+          fi
+
+      # No dependency may be added without a deliberate change here. Electron is
+      # the one exception, and it is a devDependency: nothing third-party ends
+      # up in the running app's own code path.
+      - name: Assert there are no runtime dependencies
+        run: |
+          if node -e "process.exit(require('./package.json').dependencies ? 1 : 0)"; then
+            echo "no runtime dependencies"
+          else
+            echo "a runtime dependency was added"
+            exit 1
+          fi

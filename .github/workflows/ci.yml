@@ -6,9 +6,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ["website/**", "windows/**"]
+    paths-ignore: ["website/**", "desktop/**"]
   pull_request:
-    paths-ignore: ["website/**", "windows/**"]
+    paths-ignore: ["website/**", "desktop/**"]
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -22,24 +22,34 @@ export const SITE = {
    * with the version.
    */
   downloads: {
+    /**
+     * Every platform carries the same four optional fields even when it has
+     * nothing to put in them, so the buttons can render one shape instead of
+     * branching per platform. macOS is the build with no second artifact and
+     * nothing to warn about — it is signed, notarised, and one file.
+     */
     macos: {
       label: "Download for macOS",
       icon: "/Apple.svg",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.dmg",
       requirements: "macOS 14 or later",
+      alt: null,
+      caveat: null,
     },
     windows: {
       label: "Download for Windows",
       icon: "/Windows.svg",
       url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup.exe",
+      requirements: "Windows 10 or later",
       /**
        * Windows on Arm gets its own installer rather than being served an x64
        * one to emulate. It is also what a Windows VM on an Apple Silicon Mac
        * runs, which is how most of this app is going to be tested.
        */
-      armUrl:
-        "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup-arm64.exe",
-      requirements: "Windows 10 or later",
+      alt: {
+        label: "Arm build",
+        url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus-Setup-arm64.exe",
+      },
       /**
        * Said on the page rather than discovered at the moment of installing.
        *
@@ -49,7 +59,31 @@ export const SITE = {
        * concludes the download is unsafe — so the page tells them, and the day
        * there is an Authenticode certificate this line comes out.
        */
-      unsigned: true,
+      caveat:
+        "The Windows installer is not signed yet, so SmartScreen will warn once. More info → Run anyway.",
+    },
+    linux: {
+      label: "Download for Linux",
+      icon: "/Linux.svg",
+      url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.deb",
+      requirements: "Debian, Ubuntu, Mint, Pop!_OS",
+      /** Everything that is not Debian-derived. */
+      alt: {
+        label: ".rpm for Fedora and openSUSE",
+        url: "https://github.com/henriquegpb/codestatus/releases/latest/download/CodeStatus.rpm",
+      },
+      /**
+       * The one thing a Linux visitor has to know before downloading, rather
+       * than after installing and seeing no icon.
+       *
+       * GNOME removed the system tray from its shell in 3.26 and never restored
+       * it. Ubuntu ships the AppIndicator extension enabled so the icon appears;
+       * on Fedora and vanilla GNOME it does not, and there is no error to see —
+       * the app is running correctly and looks like it failed to start. Every
+       * other desktop has a tray of its own.
+       */
+      caveat:
+        "On Fedora or vanilla GNOME, install gnome-shell-extension-appindicator first — GNOME's shell has no tray of its own and the icon will not appear. Ubuntu, KDE, XFCE, Cinnamon and MATE need nothing.",
     },
   },
 

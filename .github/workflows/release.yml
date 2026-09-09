@@ -13,14 +13,15 @@ permissions:
   contents: write
 
 jobs:
-  # Two independent jobs publishing into one release. The Windows installer does
-  # not need a Mac and the disk image does not need a Windows runner, and making
-  # either wait for the other would double the time to a release for no reason.
+  # Three independent jobs publishing into one release. The Windows installer
+  # does not need a Mac, the Linux packages do not need a Windows runner, and the
+  # disk image needs neither — making any of them wait for the others would
+  # multiply the time to a release for no reason.
   windows:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: windows
+        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
 
@@ -73,10 +74,93 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            windows/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-x64.exe
-            windows/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-arm64.exe
-            windows/dist/CodeStatus-Setup.exe
-            windows/dist/CodeStatus-Setup-arm64.exe
+            desktop/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-x64.exe
+            desktop/dist/CodeStatus-Setup-${{ steps.version.outputs.value }}-arm64.exe
+            desktop/dist/CodeStatus-Setup.exe
+            desktop/dist/CodeStatus-Setup-arm64.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  linux:
+    # The one platform whose packages have to be built on it: .deb and .rpm are
+    # produced by fpm, which needs the tooling of the system it targets.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          [[ -z "$VERSION" ]] && VERSION="${GITHUB_REF_NAME#v}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # rpmbuild is what electron-builder shells out to for the .rpm; the Ubuntu
+      # image does not carry it.
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # The whole suite, including the transport integration test. This is the
+      # only runner where it opens the Unix socket the product actually uses,
+      # rather than one standing in for a named pipe.
+      - name: Test
+        run: npm test
+
+      - name: Stamp the version
+        run: npm version "${{ steps.version.outputs.value }}" --no-git-tag-version --allow-same-version
+
+      # Unsigned, like the Windows installer. Debian and RPM signing is a
+      # repository-level concern rather than a per-file one, and there is no
+      # repository yet.
+      - name: Build the packages
+        run: npm run dist:linux
+
+      # The same stable-name trick the Windows job uses, for the same reason:
+      # /releases/latest/download/<name> needs a filename that does not move.
+      #
+      # Found by glob rather than named outright. The Windows job can name its
+      # files because `${arch}` there is the literal x64 that goes in the
+      # artifactName; on Linux electron-builder rewrites it per packager —
+      # amd64 for deb, x86_64 for rpm — and the website links these two URLs, so
+      # a guess that is wrong publishes a release whose Linux downloads 404.
+      # Picking the one that is not the Arm build is the part we actually know.
+      - name: Duplicate under stable names
+        run: |
+          cd dist
+          shopt -s nullglob
+          for ext in deb rpm; do
+            matches=()
+            for f in *."$ext"; do
+              case "$f" in *arm64*|*aarch64*) continue ;; esac
+              matches+=("$f")
+            done
+            if [ ${#matches[@]} -ne 1 ]; then
+              echo "expected exactly one x64 .$ext, found: ${matches[*]:-none}"
+              ls -la
+              exit 1
+            fi
+            cp "${matches[0]}" "CodeStatus.$ext"
+            echo "CodeStatus.$ext <- ${matches[0]}"
+          done
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/CodeStatus-${{ steps.version.outputs.value }}-*.deb
+            desktop/dist/CodeStatus-${{ steps.version.outputs.value }}-*.rpm
+            desktop/dist/CodeStatus.deb
+            desktop/dist/CodeStatus.rpm
           generate_release_notes: true
           fail_on_unmatched_files: true
 

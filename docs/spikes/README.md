@@ -27,6 +27,8 @@ Swift 6.3.3, Claude Code 2.1.186, Codex CLI 0.138.0-alpha.7 (app bundle) and 0.1
 | 11 | Behaviour when the user already has hooks | done | [06](06-agent-independence.md) |
 | 12 | Behaviour when CodeStatus is not running | done | [06](06-agent-independence.md) |
 | 13 | What Claude Code emits when it asks the user a question | done | [07](07-blocking-questions.md) |
+| 14 | A tray icon on the common Linux desktops | partial | [08](08-linux-desktop.md) |
+| 15 | Returning to a session on Linux (X11 and Wayland) | partial | [08](08-linux-desktop.md) |
 
 ## What the spikes changed
 

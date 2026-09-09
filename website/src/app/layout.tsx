@@ -79,7 +79,7 @@ const SOFTWARE_SCHEMA = {
   "@type": "SoftwareApplication",
   name: "CodeStatus",
   applicationCategory: "DeveloperApplication",
-  operatingSystem: "macOS 14 or later, Windows 10 or later",
+  operatingSystem: "macOS 14 or later, Windows 10 or later, Linux",
   url: SITE.url,
   downloadUrl: SITE.downloads.macos.url,
   softwareVersion: SITE.version,

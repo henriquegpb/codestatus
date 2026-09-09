@@ -1,0 +1,419 @@
+'use strict';
+
+// Integration test for the transport: starts the real daemon, invokes the hook
+// the way Claude Code would (payload on stdin), and checks what arrived.
+//
+// The case that matters most here is privacy. A real Claude Code payload
+// carries the prompt, the tool input, and the transcript path, and none of it
+// may cross the transport. That is asserted against the bytes on the wire, not
+// against the decoded object, so a leak cannot hide in a field we forgot to
+// look at.
+//
+// On Windows this needs the app closed: only one process can hold the named
+// pipe. Elsewhere it runs against a Unix socket of its own, which is the point
+// — the daemon schedules four periodic tasks, and a suite that only ever ran on
+// a CI runner is a suite that finds out about them late. It found a missing
+// method that way once already, four seconds into every launch.
+
+const assert = require('assert');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const ON_WINDOWS = process.platform === 'win32';
+if (!ON_WINDOWS) {
+  process.env.CODESTATUS_PIPE = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'codestatus-')),
+    'transport.sock',
+  );
+}
+
+const { Daemon } = require('../src/daemon/daemon');
+const { AgentState } = require('../src/core/state');
+const { paths } = require('../src/platform/paths');
+const win32Runtime = require('../src/platform/win32/runtime');
+const linuxRuntime = require('../src/platform/linux/runtime');
+
+const HOOK = path.join(__dirname, '..', 'hook', 'hook.js');
+
+// A realistic Claude Code payload, carrying every kind of sensitive content it
+// actually holds.
+const SECRETS = {
+  prompt: 'SECRET-PROMPT-must-not-leak',
+  tool_input: { command: 'SECRET-COMMAND', file_path: 'C:\\private\\keys.env' },
+  tool_response: 'SECRET-OUTPUT',
+  last_assistant_message: 'SECRET-REPLY',
+  transcript_path: 'C:\\Users\\someone\\.claude\\transcripts\\SECRET.jsonl',
+  message: 'SECRET-MESSAGE',
+};
+
+function runHook(payload) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [HOOK, '--provider', 'claude-code'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    child.on('exit', (code) => resolve(code));
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+// The hook the way Claude Code actually reaches it, given a command and an
+// argument vector taken from the platform seam rather than written out here.
+//
+// On Windows that is cmd.exe running the generated shim, which sets
+// ELECTRON_RUN_AS_NODE and hands over to the Electron binary as a Node
+// interpreter. On Linux it is /usr/bin/env setting the same variable directly.
+// Either way this is the chain in production, and runHook above is not: that
+// one runs hook.js under the Node running the test, which is the right shape
+// for asserting privacy and delivery and the wrong shape for asserting that any
+// of it is reachable at all.
+function runHookThroughChain(command, args, payload) {
+  return new Promise((resolve) => {
+    // Output is captured rather than discarded. When a link in this chain
+    // breaks it does so silently by design — the hook's whole contract is to
+    // exit 0 and say nothing — so whatever the shell or the runtime prints is
+    // the only evidence there is, and a CI log that omits it is a CI log that
+    // cannot be acted on.
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('exit', (code) => resolve({ code, out: out.trim() }));
+    child.on('error', (err) => resolve({ code: -1, out: `spawn failed: ${err.message}` }));
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+function waitFor(predicate, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - started > timeoutMs) return reject(new Error('timed out waiting'));
+      return setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
+
+(async () => {
+  console.log('\ntransport');
+
+  // Clear the spool so nothing is inherited from a previous run.
+  try {
+    for (const f of fs.readdirSync(paths.spool)) fs.unlinkSync(path.join(paths.spool, f));
+  } catch { /* does not exist yet */ }
+
+  const daemon = new Daemon();
+  // The process scan shells out to PowerShell and is irrelevant here; leaving
+  // it on just makes the suite slower, and on CI it runs a WMI query per
+  // daemon for no reason at all.
+  daemon.scanEnabled = false;
+
+  await new Promise((resolve) => {
+    daemon.once('listening', resolve);
+    daemon.start();
+  });
+  console.log(`  ..    daemon listening on ${daemon.endpoint}`);
+
+  // Capture what actually crosses the pipe, so it can be inspected byte by byte.
+  const seenLines = [];
+  const originalIngest = daemon.ingest.bind(daemon);
+  daemon.ingest = (line) => { seenLines.push(line); originalIngest(line); };
+
+  let failed = 0;
+  const check = (name, fn) => {
+    try {
+      fn();
+      console.log(`  ok    ${name}`);
+    } catch (err) {
+      failed += 1;
+      console.log(`  FAIL  ${name}\n        ${err.message}`);
+    }
+  };
+
+  // --- 1. a whole turn across the real transport ----------------------------
+
+  const sessionId = `it-${Date.now()}`;
+  const exitCode = await runHook({
+    hook_event_name: 'SessionStart',
+    session_id: sessionId,
+    cwd: 'C:\\Users\\test\\project',
+    model: 'opus',
+    ...SECRETS,
+  });
+  check('the hook exits 0 even carrying a dirty payload', () => {
+    assert.strictEqual(exitCode, 0);
+  });
+
+  await waitFor(() => daemon.registry.get(`claudeCode:${sessionId}`));
+  check('SessionStart creates the session as free', () => {
+    assert.strictEqual(daemon.registry.get(`claudeCode:${sessionId}`).state, AgentState.free);
+  });
+
+  await runHook({
+    hook_event_name: 'UserPromptSubmit', session_id: sessionId, turn_id: 'turn-1', ...SECRETS,
+  });
+  await waitFor(() => daemon.registry.get(`claudeCode:${sessionId}`).state === AgentState.busy);
+  check('UserPromptSubmit takes the session to busy', () => {
+    assert.strictEqual(daemon.registry.get(`claudeCode:${sessionId}`).state, AgentState.busy);
+  });
+
+  await runHook({
+    hook_event_name: 'Notification',
+    session_id: sessionId,
+    turn_id: 'turn-1',
+    notification_type: 'permission_prompt',
+    ...SECRETS,
+  });
+  await waitFor(() => daemon.registry.get(`claudeCode:${sessionId}`).state
+    === AgentState.waitingForApproval);
+  check('Notification(permission_prompt) asks for your attention', () => {
+    assert.strictEqual(daemon.registry.counts().needsYou, 1);
+  });
+
+  await runHook({
+    hook_event_name: 'Stop', session_id: sessionId, turn_id: 'turn-1', ...SECRETS,
+  });
+  await waitFor(() => daemon.registry.get(`claudeCode:${sessionId}`).state === AgentState.free);
+  check('Stop returns the session to free', () => {
+    assert.strictEqual(daemon.registry.get(`claudeCode:${sessionId}`).state, AgentState.free);
+  });
+
+  // --- 2. privacy -----------------------------------------------------------
+
+  check('no sensitive content crossed the transport', () => {
+    const wire = seenLines.join('\n');
+    assert.ok(wire.length > 0, 'nothing reached the daemon');
+    assert.ok(!wire.includes('SECRET'), `content leaked on the wire: ${wire}`);
+    // Looks for the key in the form it would actually take in the JSON. A raw
+    // substring search would false-positive: notification_type legitimately
+    // holds "permission_prompt", which contains "prompt".
+    for (const key of Object.keys(SECRETS)) {
+      assert.ok(!wire.includes(`"${key}":`), `the key ${key} appeared on the wire`);
+    }
+  });
+
+  check('the expected metadata arrived intact', () => {
+    const first = JSON.parse(seenLines[0]);
+    assert.strictEqual(first.session_id, sessionId);
+    assert.strictEqual(first.hook_event_name, 'SessionStart');
+    assert.strictEqual(first.cwd, 'C:\\Users\\test\\project');
+    assert.strictEqual(first.provider, 'claudeCode');
+    assert.ok(first.ppid > 0, 'the agent’s pid should have been captured');
+  });
+
+  check('the session kept the cwd, model and pid the hook carried', () => {
+    const s = daemon.registry.get(`claudeCode:${sessionId}`);
+    assert.strictEqual(s.cwd, 'C:\\Users\\test\\project');
+    assert.strictEqual(s.model, 'opus');
+    assert.ok(s.pid > 0);
+    assert.strictEqual(s.hasHookEvidence, true);
+  });
+
+  // --- 3. delivery ----------------------------------------------------------
+
+  // Regression. The hook used to resolve on the write callback and then call
+  // destroy(), which fires when the data reaches the OS rather than the peer
+  // and aborts the pipe rather than closing it. Events went missing now and
+  // then, with no error anywhere. Twenty back-to-back deliveries is enough to
+  // catch it: it never lost all of them, only some.
+  const burstSession = `burst-${Date.now()}`;
+  const BURST = 20;
+  const before = seenLines.length;
+  for (let i = 0; i < BURST; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await runHook({
+      hook_event_name: 'PreToolUse',
+      session_id: burstSession,
+      turn_id: `turn-${i}`,
+      tool_name: 'Read',
+      ...SECRETS,
+    });
+  }
+  await waitFor(() => seenLines.length - before >= BURST, 8000).catch(() => {});
+  check('every event in a burst is delivered, not most of them', () => {
+    assert.strictEqual(seenLines.length - before, BURST);
+  });
+
+  // --- 4. the chain Claude Code actually walks ------------------------------
+
+  // Everything above invokes hook.js directly. Nothing above proves the app
+  // works, because in production nothing invokes hook.js directly. On Windows
+  // Claude Code spawns cmd.exe, which runs a generated .cmd, which sets an
+  // environment variable, which turns an Electron binary into a Node
+  // interpreter — four links. On Linux it is /usr/bin/env doing the same job in
+  // one. A break in any link shows up as an app that installs cleanly and then
+  // reports nothing at all, for ever, with no error anywhere.
+
+  if (ON_WINDOWS) {
+    const shim = win32Runtime.writeLauncher().launcherPath;
+    console.log(`  ..    shim ${shim}`);
+    for (const line of fs.readFileSync(shim, 'utf8').trim().split(/\r?\n/)) {
+      console.log(`  ..      ${line}`);
+    }
+    check('win32: the shim points at a runtime that exists', () => {
+      const runtime = win32Runtime.resolveRuntime();
+      assert.ok(fs.existsSync(runtime), `no runtime at ${runtime}`);
+      assert.ok(fs.readFileSync(shim, 'utf8').includes('ELECTRON_RUN_AS_NODE'));
+    });
+
+    const shimSession = `shim-${Date.now()}`;
+    const shimRun = await runHookThroughChain(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/c', shim],
+      {
+        hook_event_name: 'SessionStart',
+        session_id: shimSession,
+        cwd: 'C:\\Users\\test\\project',
+        ...SECRETS,
+      },
+    );
+    await waitFor(() => daemon.registry.get(`claudeCode:${shimSession}`), 20000).catch(() => {});
+    check('win32: an event delivered through cmd.exe and the shim arrives', () => {
+      assert.strictEqual(shimRun.code, 0, `the shim exited ${shimRun.code}: ${shimRun.out}`);
+      const session = daemon.registry.get(`claudeCode:${shimSession}`);
+      assert.ok(session, `nothing arrived through the shim. output: ${shimRun.out || '(none)'}`);
+      assert.strictEqual(session.state, AgentState.free);
+      assert.strictEqual(session.provider, 'claudeCode', 'the baked-in provider flag was lost');
+    });
+
+    // The reason the provider flag lives inside the shim rather than after it
+    // in the argument vector. The real shim sits under the user's profile
+    // folder, which Windows allows to contain a space, and `cmd /c` only
+    // preserves the quotes around a path while nothing follows the closing one.
+    const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code status '));
+    const spacedShim = win32Runtime.writeLauncher({
+      target: path.join(spacedDir, 'hook-claude-code.cmd'),
+    }).launcherPath;
+    const spacedSession = `spaced-${Date.now()}`;
+    const spacedRun = await runHookThroughChain(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/c', spacedShim],
+      { hook_event_name: 'SessionStart', session_id: spacedSession, ...SECRETS },
+    );
+    await waitFor(() => daemon.registry.get(`claudeCode:${spacedSession}`), 20000).catch(() => {});
+    check('win32: a shim whose path contains a space is still reachable', () => {
+      assert.strictEqual(spacedRun.code, 0, `cmd could not run ${spacedShim}: ${spacedRun.out}`);
+      assert.ok(
+        daemon.registry.get(`claudeCode:${spacedSession}`),
+        `nothing arrived. output: ${spacedRun.out || '(none)'}`,
+      );
+    });
+  } else {
+    // Runs on macOS as well as Linux, and deliberately so: /usr/bin/env behaves
+    // the same on both, so the seam that a Linux user's hooks depend on is
+    // exercised on the machine this app is developed from rather than only on a
+    // runner. Everything platform-specific about it — that env applies leading
+    // assignments and execs the rest — is the same claim in both places.
+    const invocation = linuxRuntime.hookInvocation('claude-code');
+    // The runtime resolved above is the app's Electron, which a source checkout
+    // may not have fetched. The chain being tested is env → variable →
+    // interpreter → hook, and the Node running this suite stands in for the
+    // interpreter without weakening any of the three links that matter.
+    const args = [invocation.args[0], process.execPath, HOOK, '--provider', 'claude-code'];
+    console.log(`  ..    chain ${invocation.command} ${args.join(' ')}`);
+
+    check('linux: the invocation puts the variable before the interpreter', () => {
+      // env reads NAME=VALUE arguments only until the first one that is not,
+      // so an assignment after the binary would be passed to the binary as an
+      // argument instead of applied — silently.
+      assert.strictEqual(invocation.args[0], 'ELECTRON_RUN_AS_NODE=1');
+      assert.ok(!invocation.args.slice(1).some((a) => a.includes('=')), invocation.args.join(' '));
+    });
+
+    const envSession = `env-${Date.now()}`;
+    const envRun = await runHookThroughChain(invocation.command, args, {
+      hook_event_name: 'SessionStart',
+      session_id: envSession,
+      cwd: '/home/test/project',
+      ...SECRETS,
+    });
+    await waitFor(() => daemon.registry.get(`claudeCode:${envSession}`), 20000).catch(() => {});
+    check('linux: an event delivered through /usr/bin/env arrives', () => {
+      assert.strictEqual(envRun.code, 0, `env exited ${envRun.code}: ${envRun.out}`);
+      const session = daemon.registry.get(`claudeCode:${envSession}`);
+      assert.ok(session, `nothing arrived through env. output: ${envRun.out || '(none)'}`);
+      assert.strictEqual(session.state, AgentState.free);
+      assert.strictEqual(session.provider, 'claudeCode', 'the provider flag was lost');
+    });
+
+    // The Linux counterpart of the Windows spaced-path case. There the danger
+    // is cmd.exe's quoting rule; here there is no shell to quote for at all,
+    // and this is what says so.
+    const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code status '));
+    const spacedHook = path.join(spacedDir, 'hook.js');
+    fs.copyFileSync(HOOK, spacedHook);
+    const spacedSession = `spaced-${Date.now()}`;
+    const spacedRun = await runHookThroughChain(
+      invocation.command,
+      ['ELECTRON_RUN_AS_NODE=1', process.execPath, spacedHook, '--provider', 'claude-code'],
+      { hook_event_name: 'SessionStart', session_id: spacedSession, ...SECRETS },
+    );
+    await waitFor(() => daemon.registry.get(`claudeCode:${spacedSession}`), 20000).catch(() => {});
+    check('linux: a hook path containing a space needs no quoting', () => {
+      assert.strictEqual(spacedRun.code, 0, `env could not run ${spacedHook}: ${spacedRun.out}`);
+      assert.ok(
+        daemon.registry.get(`claudeCode:${spacedSession}`),
+        `nothing arrived. output: ${spacedRun.out || '(none)'}`,
+      );
+    });
+  }
+
+  // --- 5. the work the daemon does on a timer -------------------------------
+
+  // Every periodic task, called the way its interval calls it. A timer whose
+  // callback does not exist throws four seconds into the process and takes the
+  // app with it, and until this existed nothing here ran long enough to notice.
+  check('every scheduled task is callable', () => {
+    for (const task of ['touchHeartbeat', 'drainSpool', 'checkLiveness', 'sweep']) {
+      assert.strictEqual(typeof daemon[task], 'function', `daemon.${task} is missing`);
+      assert.doesNotThrow(() => daemon[task](), `daemon.${task}() threw`);
+    }
+  });
+
+  check('sweeping collects a session past its grace period', () => {
+    const id = 'claudeCode:swept';
+    daemon.registry.sessions.set(id, {
+      id,
+      state: AgentState.ended,
+      endedAt: Date.now() - 60_000,
+      pid: null,
+      clock: { toJSON: () => ({}) },
+    });
+    daemon.sweep();
+    assert.ok(!daemon.registry.get(id), 'an ended session should have been collected');
+  });
+
+  // --- 6. the spool, when the daemon is away --------------------------------
+
+  daemon.stop();
+  const offlineSession = `off-${Date.now()}`;
+  await runHook({ hook_event_name: 'SessionStart', session_id: offlineSession, ...SECRETS });
+  check('with the daemon away, the event goes to the spool', () => {
+    const spooled = fs.readdirSync(paths.spool).filter((n) => n.endsWith('.ndjson'));
+    assert.ok(spooled.length > 0, 'nothing was queued');
+  });
+
+  const revived = new Daemon();
+  revived.scanEnabled = false;
+  await new Promise((resolve) => { revived.once('listening', resolve); revived.start(); });
+  await waitFor(() => revived.registry.get(`claudeCode:${offlineSession}`));
+  check('on the way back, the daemon replays what the spool held', () => {
+    assert.ok(revived.registry.get(`claudeCode:${offlineSession}`));
+    assert.strictEqual(
+      fs.readdirSync(paths.spool).filter((n) => n.endsWith('.ndjson')).length,
+      0,
+    );
+  });
+  revived.stop();
+
+  console.log(failed === 0 ? '\nall transport cases passed' : `\n${failed} failed`);
+  process.exit(failed === 0 ? 0 : 1);
+})().catch((err) => {
+  console.error('fatal error in the test:', err);
+  process.exit(1);
+});

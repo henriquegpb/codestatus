@@ -1,0 +1,108 @@
+{
+  "name": "codestatus-desktop",
+  "version": "0.5.1",
+  "description": "Session monitor for Claude Code, in the Windows system tray and the Linux panel",
+  "main": "src/main.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "npm run test:unit && npm run test:transport",
+    "test:unit": "npm run test:reducer && npm run test:installer && npm run test:platform && npm run test:titles",
+    "test:reducer": "node test/reducer.test.js",
+    "test:installer": "npm run test:installer:win32 && npm run test:installer:linux",
+    "test:installer:win32": "node test/installer.test.js --seam win32",
+    "test:installer:linux": "node test/installer.test.js --seam linux",
+    "test:platform": "node test/platform.test.js",
+    "test:titles": "node test/titles.test.js",
+    "test:transport": "node test/transport.test.js",
+    "preview": "electron test/preview.js",
+    "icons": "electron test/render-icons.js",
+    "dist": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^43.4.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.codestatus.windows",
+    "productName": "CodeStatus",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "hook",
+        "to": "hook"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "CodeStatus-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CodeStatus",
+      "deleteAppDataOnUninstall": false,
+      "include": "build/uninstall.nsh"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "executableName": "codestatus",
+      "category": "Development",
+      "icon": "build/icons",
+      "synopsis": "Session monitor for Claude Code",
+      "description": "Tracks every Claude Code session on your machine and tells you the moment one finishes, needs approval, or is waiting on you.",
+      "desktop": {
+        "entry": {
+          "Name": "CodeStatus",
+          "Comment": "Session monitor for Claude Code",
+          "Categories": "Development;Utility;",
+          "Keywords": "claude;agent;monitor;",
+          "StartupNotify": "false",
+          "StartupWMClass": "CodeStatus"
+        }
+      },
+      "artifactName": "CodeStatus-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "recommends": [
+        "libayatana-appindicator3-1",
+        "xdotool"
+      ]
+    }
+  }
+}

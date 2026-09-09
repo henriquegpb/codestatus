@@ -69,7 +69,12 @@ contents are never read.
 
 - Codex cannot report that it is waiting for free-text input: no such event exists.
 - CodeStatus does not send prompts to sessions it did not launch itself.
-- Windows tracks Claude Code only, and its installer is not code-signed yet.
+- Windows and Linux track Claude Code only, and neither installer is signed yet.
+- On Linux, GNOME has no system tray of its own: Ubuntu ships the AppIndicator
+  extension enabled, and on Fedora or vanilla GNOME it has to be installed or no
+  icon appears. Wayland has no protocol for one application to raise another's
+  window, so clicking a session opens its folder unless the terminal is running
+  through XWayland.
 `;
 
 export function GET() {
