@@ -176,3 +176,134 @@ jobs:
             desktop/dist/*.deb
             desktop/dist/*.rpm
           retention-days: 30
+  smoke:
+    # Installs the .deb and drives the installed app, on the operating system it
+    # is for. Everything before this proves the parts; this is the only place the
+    # product is started.
+    #
+    # It exists because the whole port shipped without anyone ever launching it
+    # on Linux. The parts were tested exhaustively and the premise -- an app that
+    # sits in a tray and tells you when an agent needs you -- had never once run.
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: packages
+
+      # xvfb is the display, dbus the session bus a tray icon is published on,
+      # and libayatana-appindicator3 the library Electron needs to publish one.
+      # xdotool is what the app shells out to when a session is clicked.
+      - name: Install a desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb dbus-x11 libayatana-appindicator3-1 xdotool x11-utils xterm
+
+      # The real thing: apt resolves the dependencies electron-builder declared,
+      # against a machine that has none of them yet.
+      - name: Install the package
+        working-directory: packages
+        run: |
+          deb=$(ls *-amd64.deb | head -1)
+          sudo apt-get install -y "./$deb"
+          test -x /opt/CodeStatus/codestatus
+          test -f /opt/CodeStatus/resources/hook/hook.js
+          ls /usr/share/applications/ | grep -i codestatus
+
+      # Writes the hook entries naming the *installed* paths, then reads back
+      # exactly what went into settings.json. Nothing below is written by this
+      # script: the command and the argument vector are the ones the app chose.
+      - name: Connect the hooks, as the app would
+        env:
+          CODESTATUS_HOOK_RUNTIME: /opt/CodeStatus/codestatus
+          CODESTATUS_HOOK_SCRIPT: /opt/CodeStatus/resources/hook/hook.js
+        run: |
+          node -e "require('./src/install/claude').install()"
+          node -e "
+            const s = require(require('os').homedir() + '/.claude/settings.json');
+            const h = s.hooks.SessionStart[0].hooks[0];
+            if (h.async !== true) { console.error('not async'); process.exit(1); }
+            require('fs').writeFileSync('/tmp/invocation.json', JSON.stringify(h));
+            console.log(h.command, h.args.join(' '));
+          "
+
+      # The app itself, under a display and a session bus, as a user would.
+      - name: Launch the app
+        run: |
+          dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            /opt/CodeStatus/codestatus --no-sandbox > /tmp/app.log 2>&1 &
+          echo $! > /tmp/app.pid
+          # Past the four periodic timers, one of which once crashed the app
+          # four seconds into every launch.
+          for i in $(seq 1 30); do
+            [ -S "$HOME/.local/share/CodeStatus/run/daemon.sock" ] && break
+            sleep 1
+          done
+          sleep 12
+          pgrep -f "/opt/CodeStatus/codestatus" > /dev/null \
+            || { echo "the app died"; cat /tmp/app.log; exit 1; }
+          echo "still running after the timers fired"
+
+      - name: Assert it set itself up
+        run: |
+          run="$HOME/.local/share/CodeStatus/run"
+          test -S "$run/daemon.sock" || { echo "no socket"; cat /tmp/app.log; exit 1; }
+          [ "$(stat -c%a "$run/daemon.sock")" = "600" ] || { echo "socket is $(stat -c%a "$run/daemon.sock")"; exit 1; }
+          [ "$(stat -c%a "$HOME/.local/share/CodeStatus/state")" = "700" ] || exit 1
+          [ "$(cat "$run/pipe-name")" = "$run/daemon.sock" ] || { echo "pointer disagrees"; exit 1; }
+          echo "socket 0600, dirs 0700, pointer agrees"
+
+      # The whole point. An event goes in through the exact chain Claude Code
+      # will use -- /usr/bin/env, the installed binary as a Node interpreter, the
+      # installed hook -- and has to come out as a session in the running app.
+      - name: Deliver an event through the installed chain
+        run: |
+          node -e "
+            const { spawn } = require('child_process');
+            const inv = require('/tmp/invocation.json');
+            const child = spawn(inv.command, inv.args, { stdio: ['pipe', 'inherit', 'inherit'] });
+            child.on('exit', (c) => process.exit(c === 0 ? 0 : 1));
+            child.stdin.end(JSON.stringify({
+              hook_event_name: 'SessionStart',
+              session_id: 'smoke-test-session',
+              cwd: process.cwd(),
+              prompt: 'SECRET-MUST-NOT-PERSIST',
+            }));
+          "
+          # The registry persists on a 1.5s debounce.
+          for i in $(seq 1 20); do
+            grep -q "smoke-test-session" "$HOME/.local/share/CodeStatus/state/sessions.json" 2>/dev/null && break
+            sleep 1
+          done
+          snapshot="$HOME/.local/share/CodeStatus/state/sessions.json"
+          grep -q "smoke-test-session" "$snapshot" \
+            || { echo "the event never reached the app"; cat /tmp/app.log; ls -la "$HOME/.local/share/CodeStatus/run/spool"; exit 1; }
+          grep -q "SECRET" "$snapshot" && { echo "content leaked into the snapshot"; exit 1; }
+          echo "the session arrived, and carried no content with it"
+
+      # Raising a window is the one capability Linux may not have. Under Xvfb
+      # this is X11, so it is the path that can work -- and if xdotool cannot
+      # find a window by pid here, it cannot on a user's X11 session either.
+      - name: Raise a window by pid
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x1024x24 & sleep 2
+          xterm -e "sleep 60" & xt=$!
+          sleep 3
+          node -e "
+            const { focusProcessWindow, focusCapability } = require('./src/platform/linux/focus');
+            console.log('capability:', JSON.stringify(focusCapability()));
+            focusProcessWindow($xt, (ok) => {
+              console.log('raised:', ok);
+              process.exit(ok ? 0 : 1);
+            });
+          "
+
+      - name: Stop the app
+        if: always()
+        run: |
+          pkill -f "/opt/CodeStatus/codestatus" || true
+          echo "--- app log ---"; cat /tmp/app.log || true
