@@ -358,9 +358,11 @@ test('A session with no title keeps the repository name it has today', () => {
   assert.strictEqual(primaryLabel(session), 'backend');
   assert.strictEqual(secondaryLabel(session), null);
 
+  // A title qualifies the row; it does not take it over. The location keeps
+  // the lead so that a column of rows stays scannable by place.
   session.sessionTitle = 'Calendar fix';
-  assert.strictEqual(primaryLabel(session), 'Calendar fix');
-  assert.strictEqual(secondaryLabel(session), 'backend');
+  assert.strictEqual(primaryLabel(session), 'backend');
+  assert.strictEqual(secondaryLabel(session), 'Calendar fix');
   // The name every export path still uses must not have moved.
   assert.strictEqual(displayName(session), 'backend');
 });

@@ -387,9 +387,11 @@ struct SessionTitleTests {
         #expect(session.primaryLabel == "backend")
         #expect(session.secondaryLabel == nil)
 
+        // A title qualifies the row; it does not take it over. The location
+        // keeps the lead so that a column of rows stays scannable by place.
         session.sessionTitle = "Calendar fix"
-        #expect(session.primaryLabel == "Calendar fix")
-        #expect(session.secondaryLabel == "backend")
+        #expect(session.primaryLabel == "backend")
+        #expect(session.secondaryLabel == "Calendar fix")
         // The name every export path still uses must not have moved.
         #expect(session.displayName == "backend")
     }

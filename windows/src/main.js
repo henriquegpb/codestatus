@@ -216,8 +216,9 @@ function sessionForRenderer(session) {
   return {
     id: session.id,
     name: primaryLabel(session),
-    // The repository, sent only when the title has taken the line above it.
-    location: secondaryLabel(session),
+    // The agent's own name for the session, sent only when it has one. It
+    // qualifies the row beside the location rather than replacing it.
+    agentTitle: secondaryLabel(session),
     provider: session.provider,
     state: session.state,
     label: LABELS[session.state] || session.state,

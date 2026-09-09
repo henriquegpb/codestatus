@@ -356,20 +356,32 @@ private struct SessionRow: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.primaryLabel)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
+                // The location leads and the agent's title rides beside it,
+                // dimmed. Sharing the top line rather than taking the one below
+                // is what keeps the meta line readable: the location added
+                // there truncated both itself and the provider next to it.
+                //
+                // The layout priority is the whole trick — without it the two
+                // shrink together and a long title takes the repository down
+                // with it. The location is short and fixed, so it is given the
+                // space it needs and the title truncates into what is left.
+                HStack(spacing: 4) {
+                    Text(session.primaryLabel)
+                        .font(.system(size: 13, weight: .medium))
+                        .layoutPriority(1)
+
+                    if let title = session.secondaryLabel {
+                        Text("·")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                        Text(title)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .lineLimit(1)
 
                 HStack(spacing: 4) {
-                    // Where, before what. Both lines are single-line and
-                    // truncate from the right, so the location has to come
-                    // first to survive a narrow row — and the duration, which
-                    // the tick keeps redrawing anyway, is the cheapest thing
-                    // to lose off the end.
-                    if let location = session.secondaryLabel {
-                        Text(location)
-                        Text("·")
-                    }
                     Text(session.provider.displayName)
                     Text("·")
                     Text(session.state.label)

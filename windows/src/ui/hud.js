@@ -106,14 +106,20 @@ function renderSession(session) {
   row.appendChild(dot);
 
   const info = el('div', 'info');
-  info.appendChild(el('div', 'name', session.name));
+  // The location leads and the agent's title rides beside it, dimmed. Sharing
+  // the top line rather than taking the meta line is what keeps that line
+  // readable: the location put there ellipsized both itself and the provider
+  // sitting next to it.
+  const name = el('div', 'name');
+  name.appendChild(el('span', 'place', session.name));
+  if (session.agentTitle) {
+    name.appendChild(el('span', 'sep', '·'));
+    name.appendChild(el('span', 'title', session.agentTitle));
+  }
+  info.appendChild(name);
 
   const meta = el('div', 'meta');
   const provider = PROVIDER_NAMES[session.provider] || 'Agent';
-  // Where, before what. Both lines ellipsize from the right, so the location
-  // has to come first to survive a narrow row — and the age, which the tick
-  // keeps redrawing anyway, is the cheapest thing to lose off the end.
-  if (session.location) meta.appendChild(el('span', null, `${session.location} · `));
   meta.appendChild(el('span', null, `${provider} · ${session.label}`));
   if (showsDuration(session.state)) {
     meta.appendChild(el('span', null, ' · '));

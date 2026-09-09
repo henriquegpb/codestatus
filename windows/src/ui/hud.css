@@ -115,11 +115,35 @@
 }
 
 .session .name {
-  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
   white-space: nowrap;
+}
+
+/* The location keeps the width it needs and the title ellipsizes into what is
+   left, so a long title cannot take the repository down with it. Capped all
+   the same: a folder is allowed to be called anything, and one long enough to
+   fill the row would leave nothing to qualify it with. */
+.session .name .place {
+  font-weight: 600;
+  flex: 0 0 auto;
+  max-width: 65%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.session .name .sep,
+.session .name .title {
+  font-weight: 400;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session .name .sep { flex: 0 0 auto; }
 
 .session .meta {
   font-size: 12px;

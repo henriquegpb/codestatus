@@ -97,20 +97,24 @@ function agentTitle(session) {
   return session.sessionTitle || null;
 }
 
-// What the row leads with: the agent's own title when there is one.
+// What the row leads with: where the session is.
 //
-// Three sessions in the same repository are three rows reading `backend`,
-// which is the one case where the location is no help at all — so when the
-// agent has named the session, that name goes first and the location moves to
-// secondaryLabel rather than being dropped.
+// The location is the stable half of a row's identity. It is fixed for the
+// life of the session, it is what the eye scans down a column of rows, and it
+// is what the row's actions act on — so it keeps the lead, at full weight,
+// whether or not the agent has named anything.
 function primaryLabel(session) {
-  return agentTitle(session) || displayName(session);
+  return displayName(session);
 }
 
-// The location, but only once the title has taken the line above it. Null
-// without a title, so the caller cannot render the same string twice.
+// The agent's own name for the session, to sit beside the location.
+//
+// A qualifier, not an identity: it is what tells three rows reading `backend`
+// apart, and it is the half that can afford to be dimmed and to ellipsize
+// first. Null when the agent has not named the session, so a row without a
+// title renders exactly as it did before titles existed.
 function secondaryLabel(session) {
-  return agentTitle(session) ? displayName(session) : null;
+  return agentTitle(session);
 }
 
 // A toast body, led by the agent's own name for the session.

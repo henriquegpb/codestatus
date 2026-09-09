@@ -297,22 +297,28 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
         return sessionTitle
     }
 
-    /// What the row leads with: the agent's own title when there is one.
+    /// What the row leads with: where the session is.
     ///
-    /// Three sessions in the same repository are three rows reading `backend`,
-    /// which is the one case where the location is no help at all — so when the
-    /// agent has named the session, that name goes first and the location moves
-    /// to ``secondaryLabel`` rather than being dropped.
+    /// The location is the stable half of a row's identity. It is fixed for the
+    /// life of the session, it is what the eye scans down a column of rows, and
+    /// it is what the row's actions act on — so it keeps the lead, at full
+    /// weight, whether or not the agent has named anything.
     public var primaryLabel: String {
-        agentTitle ?? displayName
+        displayName
     }
 
-    /// The location, but only once the title has taken the line above it.
+    /// The agent's own name for the session, to sit beside the location.
     ///
-    /// `nil` without a title, so the caller cannot render the same string
-    /// twice on a session we know nothing extra about.
+    /// A qualifier, not an identity: it is what tells three rows reading
+    /// `backend` apart, and it is the half that can afford to be dimmed and to
+    /// truncate first. A model writes it out of a drifting conversation, so it
+    /// is often long and sometimes junk — which is the other reason it does not
+    /// lead.
+    ///
+    /// `nil` when the agent has not named the session, so a row without a title
+    /// renders exactly as it did before titles existed.
     public var secondaryLabel: String? {
-        agentTitle == nil ? nil : displayName
+        agentTitle
     }
 
     /// A notification body, led by the agent's own name for the session.

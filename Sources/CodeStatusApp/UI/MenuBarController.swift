@@ -164,7 +164,7 @@ final class MenuBarController {
                     self?.onQuit?()
                 }
             )
-            .frame(width: 320)
+            .frame(width: 380)
         )
         // Lets the popover size itself to the list rather than to a constant.
         hosting.sizingOptions = [.preferredContentSize]
