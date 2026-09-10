@@ -105,7 +105,7 @@ export const SITE = {
    * resolve to whatever is newest regardless. Bump it with the tag; a stale
    * value here misinforms crawlers rather than breaking anything.
    */
-  version: "0.6.1",
+  version: "0.6.2",
   author: "Henrique Barone",
   license: "https://opensource.org/licenses/MIT",
 } as const;
