@@ -46,6 +46,10 @@ sudo apt install ./CodeStatus.deb     # Debian, Ubuntu, Mint, Pop!_OS
 sudo dnf install ./CodeStatus.rpm     # Fedora, RHEL, openSUSE
 ```
 
+On Ubuntu 24.04 and newer the `.deb` installs a narrow AppArmor profile for the
+CodeStatus executable. It permits the unprivileged user namespace Chromium's
+sandbox needs, while leaving the setuid sandbox disabled.
+
 Read [What works on which desktop](#what-works-on-which-desktop) first, because
 on GNOME there is one thing to install alongside it.
 
@@ -79,8 +83,8 @@ event.
 ### From source
 
 For working on the app, or trying a branch. This is the path that still needs
-[Node.js 18+](https://nodejs.org) — to fetch dependencies and run the tests, not
-to run the hook.
+[Node.js 22.12+](https://nodejs.org) — to fetch dependencies and run the tests,
+not to run the hook.
 
 ```powershell
 cd desktop

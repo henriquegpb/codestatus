@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       # The unit suites need nothing installed: they are plain Node against
       # source with no dependencies, which is the point of keeping src/core/
@@ -127,7 +127,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y rpm
@@ -168,6 +168,7 @@ jobs:
             || { echo "hook.js is not in the package"; exit 1; }
           dpkg-deb -c "$deb" | grep -E "/opt/CodeStatus/codestatus$" \
             || { echo "the executable is not where the hook entry will point"; exit 1; }
+          npm --prefix .. run test:package:linux -- "$PWD/$deb"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -200,7 +201,7 @@ jobs:
       - name: Install a desktop
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus-x11 libayatana-appindicator3-1 xdotool x11-utils xterm openbox
+          sudo apt-get install -y xvfb dbus-x11 libayatana-appindicator3-1 xdotool x11-utils xterm openbox python3-dbus python3-gi
 
       # The real thing: apt resolves the dependencies electron-builder declared,
       # against a machine that has none of them yet.
@@ -212,6 +213,16 @@ jobs:
           test -x /opt/CodeStatus/codestatus
           test -f /opt/CodeStatus/resources/hook/hook.js
           ls /usr/share/applications/ | grep -i codestatus
+
+      # Chromium publishes Linux tray icons over StatusNotifierItem. A mock
+      # watcher records the exact registration argument, because keeping the
+      # process alive cannot tell whether GNOME accepted the indicator.
+      - name: Register a tray item with the Linux protocol
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            env CODESTATUS_ELECTRON=/opt/CodeStatus/codestatus \
+                CODESTATUS_APP=/opt/CodeStatus/resources/app.asar \
+                bash test/linux-tray-integration.sh
 
       # Writes the hook entries naming the *installed* paths, then reads back
       # exactly what went into settings.json. Nothing below is written by this
@@ -234,7 +245,7 @@ jobs:
       - name: Launch the app
         run: |
           dbus-run-session -- xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-            /opt/CodeStatus/codestatus --no-sandbox > /tmp/app.log 2>&1 &
+            /opt/CodeStatus/codestatus > /tmp/app.log 2>&1 &
           echo $! > /tmp/app.pid
           # Waits on the pointer, not on a socket path guessed here. Where the
           # socket goes depends on $XDG_RUNTIME_DIR, which the runner has and a

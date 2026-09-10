@@ -1,9 +1,9 @@
 # Spike 14 & 15 — the Linux desktop: a tray to draw in, and a window to raise
 
-- **Spike 14 (a tray icon on the common desktops):** partial — the app runs on Linux and
-  constructs its tray without dying, under a session bus with libayatana-appindicator present.
-  Whether the icon then *appears* on GNOME, KDE or XFCE has still not been seen, because CI has
-  no panel to draw it on.
+- **Spike 14 (a tray icon on the common desktops):** partial — the icon is verified on Ubuntu
+  26.04, GNOME 50 and Wayland with Ubuntu AppIndicators. A protocol-level CI test also checks
+  that Chromium gives the watcher a valid StatusNotifierItem service name. KDE, XFCE and the
+  other panel implementations have not yet been seen.
 - **Spike 15 (returning to a session):** done for X11 — verified end to end on Linux: the window
   is found by pid, activated through an EWMH window manager, and the foreground window afterwards
   is confirmed to belong to the target process. Wayland is settled by the protocol rather than by
@@ -12,8 +12,8 @@
 The record below was originally written with nothing having run on Linux at all. That changed:
 the CI `smoke` job now installs the .deb on Ubuntu, launches the app under Xvfb and a session
 bus, and drives an event through the invocation it wrote into settings.json. What that job
-proves is marked inline. What it still cannot reach is a panel and a compositor, so the tray
-row of the capability matrix remains a prediction.
+proves is marked inline. A real Ubuntu GNOME/Wayland session now covers the panel and compositor
+that CI cannot provide; the other desktop rows of the capability matrix remain predictions.
 
 ## Hypothesis
 
@@ -184,6 +184,14 @@ app. It now covers, on Ubuntu:
   machine that has none of them, and puts the binary and the hook where the hook entry will name
   them. The first attempt at a Linux release failed here, for the most ordinary reason available:
   fpm needs a maintainer for a `.deb`, NSIS never did, so nothing had ever set one.
+- **The Chromium sandbox starts without a bypass.** The package carries an AppArmor profile that
+  grants unprivileged user namespaces to this executable on Ubuntu 24.04 and newer. The smoke job
+  launches the installed binary without `--no-sandbox`, so it can no longer hide a package whose
+  `chrome-sandbox` permissions make a normal desktop launch fail.
+- **The tray registration is valid.** A minimal StatusNotifierWatcher records the value Chromium
+  sends to `RegisterStatusNotifierItem` and rejects the old, invalid service-plus-object-path
+  form. Electron 44 sends only the service name. The installed build was also accepted by Ubuntu
+  AppIndicators on GNOME 50 under Wayland.
 - **The app starts and stays up**, past the four periodic timers — the trap that once crashed
   every launch four seconds in.
 - **The `$XDG_RUNTIME_DIR` split is real rather than theoretical.** The runner has that variable,
@@ -201,9 +209,9 @@ app. It now covers, on Ubuntu:
 
 Restating the ones that decide whether to believe the rest:
 
-1. **No panel, no compositor.** The app draws a tray icon and nothing in CI can display one, so
-   "the icon appears on GNOME with the extension, and on KDE without it" is still read from
-   documentation. This is the gap that most needs a person with a laptop.
+1. **Only Ubuntu's GNOME panel has been observed.** CI still has no panel or compositor. The icon
+   appears on GNOME 50 with Ubuntu AppIndicators, but KDE, XFCE, Cinnamon, MATE, Budgie and LXQt
+   remain protocol-backed expectations rather than observations.
 2. **X11 only.** The focus path is verified under Xvfb, which is X11. The Wayland answer is a
    protocol fact rather than a measurement, and the XWayland middle case is untested.
 3. **The popover corner is a heuristic.** Panel position inferred from reserved space is right on
@@ -235,6 +243,6 @@ Linux moves from "not supported" to shipped-with-stated-limits. On Ubuntu, KDE o
 it is the Windows build's equal. On Fedora GNOME under Wayland it is a notifier that cannot
 always take you back, and both halves of that are visible in the app rather than in a bug report.
 
-The next thing worth doing is still not more Linux code. It is opening it on one machine per row
-of the tray matrix — the one claim CI cannot reach — and pointing a real Claude Code session at
-it.
+The next thing worth doing is still not more Linux code. It is opening it on one machine per
+remaining row of the tray matrix — the claim CI cannot reach — and pointing a real Claude Code
+session at it.

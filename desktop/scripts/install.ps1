@@ -46,9 +46,11 @@ if (-not $node) {
 $version = (& node --version).Trim()
 Ok "$version at $($node.Source)"
 
-$major = [int]($version -replace '^v(\d+)\..*$', '$1')
-if ($major -lt 18) {
-    Fail "Node $version is too old; the app needs 18 or newer."
+$parts = $version.TrimStart('v').Split('.')
+$major = [int]$parts[0]
+$minor = [int]$parts[1]
+if ($major -lt 22 -or ($major -eq 22 -and $minor -lt 12)) {
+    Fail "Node $version is too old; the app needs 22.12 or newer."
     exit 1
 }
 
@@ -80,13 +82,10 @@ try {
 
 $exe = Join-Path $root 'node_modules\electron\dist\electron.exe'
 
-# `npm install` installs the electron *package*, but what downloads and extracts
-# the actual binary is its postinstall script. That step fails often — seen both
-# hanging with no message and dying with 0xC0000409 — and npm carries on as if
-# it had succeeded. So we check, and if the binary is missing we run the
-# extraction by hand: the zip is usually already cached and it takes seconds.
+# The Electron npm package can be present without its platform binary. Check
+# explicitly and run its downloader when npm installed only the JavaScript shim.
 if (-not (Test-Path $exe)) {
-    Warn "the postinstall did not deliver the binary; extracting by hand"
+    Warn "the Electron package did not deliver the binary; fetching it now"
     Push-Location $root
     try {
         & node 'node_modules\electron\install.js'
