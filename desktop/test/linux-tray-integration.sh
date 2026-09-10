@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 electron=${CODESTATUS_ELECTRON:-"$root/node_modules/electron/dist/electron"}
 app=${CODESTATUS_APP:-"$root"}
+python=${CODESTATUS_PYTHON:-/usr/bin/python3}
 
 if [ "$(uname -s)" != Linux ]; then
   echo "tray protocol: SKIP (needs Linux)"
@@ -14,9 +15,14 @@ if [ ! -x "$electron" ]; then
   echo "Electron is not installed at $electron" >&2
   exit 1
 fi
+if [ ! -x "$python" ]; then
+  echo "system Python is not installed at $python" >&2
+  exit 1
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+mkdir -m 700 "$tmp/runtime"
 export CODESTATUS_TRAY_MARKER="$tmp/registration"
 export CODESTATUS_TRAY_READY="$tmp/watcher-ready"
 export CODESTATUS_TRAY_LOG="$tmp/app.log"
@@ -24,9 +30,16 @@ export CODESTATUS_TRAY_USER_DATA="$tmp/user-data"
 export CODESTATUS_TRAY_ELECTRON="$electron"
 export CODESTATUS_TRAY_APP="$app"
 export CODESTATUS_TRAY_HELPERS="$root/test/helpers"
+export CODESTATUS_TRAY_PYTHON="$python"
+export CODESTATUS_DATA_HOME="$tmp/data"
+export CODESTATUS_PIPE="$tmp/runtime/daemon.sock"
+export CODESTATUS_CLAUDE_SETTINGS="$tmp/claude/settings.json"
+export CODESTATUS_CLAUDE_PROJECTS="$tmp/claude/projects"
+export CODESTATUS_CODEX_INDEX="$tmp/codex/session_index.jsonl"
+export CODESTATUS_CLAUDE_DESKTOP_SESSIONS="$tmp/claude-desktop-sessions.json"
 
 if ! dbus-run-session -- bash -euo pipefail -c '
-  python3 "$CODESTATUS_TRAY_HELPERS/status-notifier-watcher.py" &
+  "$CODESTATUS_TRAY_PYTHON" "$CODESTATUS_TRAY_HELPERS/status-notifier-watcher.py" &
   watcher=$!
   app=""
   cleanup() {
