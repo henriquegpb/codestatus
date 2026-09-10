@@ -16,12 +16,21 @@ final class SettingsModel {
         static let soundEnabled = "co.codestatus.soundEnabled"
         static let notificationsEnabled = "co.codestatus.notificationsEnabled"
         static let onlyWhenUnfocused = "co.codestatus.onlyWhenUnfocused"
+        static let keepAwakeEnabled = "co.codestatus.keepAwakeEnabled"
+        static let keepAwakeEngagement = "co.codestatus.keepAwakeEngagement"
+        static let keepAwakeBatteryFloor = "co.codestatus.keepAwakeBatteryFloor"
     }
 
     var soundEnabled: Bool { didSet { persist() } }
     var notificationsEnabled: Bool { didSet { persist() } }
     var onlyWhenUnfocused: Bool { didSet { persist() } }
     var launchAtLogin: Bool
+
+    /// Off by default. It changes how the machine behaves rather than how the app
+    /// behaves, and a menu bar tool does not get to make that choice for anyone.
+    var keepAwakeEnabled: Bool { didSet { persist() } }
+    var keepAwakeEngagement: WakeLockPolicy.Engagement { didSet { persist() } }
+    var keepAwakeBatteryFloor: Int { didSet { persist() } }
 
     /// Nil when not muted; otherwise when the quiet period ends.
     var mutedUntil: Date? { didSet { onChange?() } }
@@ -34,10 +43,17 @@ final class SettingsModel {
             Key.soundEnabled: true,
             Key.notificationsEnabled: true,
             Key.onlyWhenUnfocused: true,
+            Key.keepAwakeEnabled: false,
+            Key.keepAwakeBatteryFloor: WakeLockPolicy.defaultBatteryFloor,
         ])
         soundEnabled = defaults.bool(forKey: Key.soundEnabled)
         notificationsEnabled = defaults.bool(forKey: Key.notificationsEnabled)
         onlyWhenUnfocused = defaults.bool(forKey: Key.onlyWhenUnfocused)
+        keepAwakeEnabled = defaults.bool(forKey: Key.keepAwakeEnabled)
+        keepAwakeEngagement = WakeLockPolicy.Engagement(
+            rawValue: defaults.string(forKey: Key.keepAwakeEngagement) ?? ""
+        ) ?? .whileAgentsWork
+        keepAwakeBatteryFloor = defaults.integer(forKey: Key.keepAwakeBatteryFloor)
         launchAtLogin = LoginItem.isEnabled
     }
 
@@ -46,6 +62,9 @@ final class SettingsModel {
         defaults.set(soundEnabled, forKey: Key.soundEnabled)
         defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled)
         defaults.set(onlyWhenUnfocused, forKey: Key.onlyWhenUnfocused)
+        defaults.set(keepAwakeEnabled, forKey: Key.keepAwakeEnabled)
+        defaults.set(keepAwakeEngagement.rawValue, forKey: Key.keepAwakeEngagement)
+        defaults.set(keepAwakeBatteryFloor, forKey: Key.keepAwakeBatteryFloor)
         onChange?()
     }
 
@@ -75,6 +94,7 @@ final class SettingsModel {
 struct SettingsView: View {
     @Bindable var model: SettingsModel
     var updates: UpdateCoordinator?
+    var wakeLock: WakeLockCoordinator?
     var onOpenSetup: () -> Void
     var onRepairHooks: () -> Void
     var onUninstallHooks: () -> Void
@@ -101,6 +121,50 @@ struct SettingsView: View {
                         Spacer()
                         Button("30 min") { model.mute(for: 30 * 60) }
                         Button("2 hours") { model.mute(for: 2 * 3600) }
+                    }
+                }
+            }
+
+            // Named for the machine rather than for the agents, because what it
+            // changes is when this Mac sleeps — and the limit below is the whole
+            // reason the section cannot be called "keep agents running".
+            Section("Sleep") {
+                Toggle("Keep this Mac awake", isOn: $model.keepAwakeEnabled)
+                Text("Stops the idle sleep that interrupts a long turn. "
+                    + "**Closing the lid still sleeps this Mac** — macOS reserves that "
+                    + "for the system, and no app can hold it open.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if model.keepAwakeEnabled {
+                    Picker("Hold it", selection: $model.keepAwakeEngagement) {
+                        Text("While agents work").tag(WakeLockPolicy.Engagement.whileAgentsWork)
+                        Text("Always").tag(WakeLockPolicy.Engagement.always)
+                    }
+                    .pickerStyle(.segmented)
+                    .help("While agents work releases the moment a turn ends — and while "
+                        + "an agent is waiting on you, since nothing is progressing then.")
+
+                    // Deliberately not lower than 5%: below that the machine is
+                    // minutes from shutting down on its own, and a floor that
+                    // cannot be trusted to fire is worse than none.
+                    Stepper(
+                        value: $model.keepAwakeBatteryFloor,
+                        in: 5...50,
+                        step: 5
+                    ) {
+                        HStack {
+                            Text("Let it sleep below")
+                            Spacer()
+                            Text("\(model.keepAwakeBatteryFloor)%").foregroundStyle(.secondary)
+                        }
+                    }
+                    .help("Ignored while plugged in. Opening your bag to a Mac at 0% "
+                        + "loses more than the interrupted turn would have.")
+
+                    if let wakeLock {
+                        Text(wakeLock.statusDescription)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -169,7 +233,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 420)
+        .frame(width: 460, height: 560)
     }
 }
 
@@ -178,6 +242,7 @@ final class SettingsWindowController {
     private var window: NSWindow?
     private let model: SettingsModel
     private let updates: UpdateCoordinator?
+    private let wakeLock: WakeLockCoordinator?
     private let onOpenSetup: () -> Void
     private let onRepairHooks: () -> Void
     private let onUninstallHooks: () -> Void
@@ -186,6 +251,7 @@ final class SettingsWindowController {
     init(
         model: SettingsModel,
         updates: UpdateCoordinator? = nil,
+        wakeLock: WakeLockCoordinator? = nil,
         onOpenSetup: @escaping () -> Void,
         onRepairHooks: @escaping () -> Void,
         onUninstallHooks: @escaping () -> Void,
@@ -193,6 +259,7 @@ final class SettingsWindowController {
     ) {
         self.model = model
         self.updates = updates
+        self.wakeLock = wakeLock
         self.onOpenSetup = onOpenSetup
         self.onRepairHooks = onRepairHooks
         self.onUninstallHooks = onUninstallHooks
@@ -214,6 +281,7 @@ final class SettingsWindowController {
                 rootView: SettingsView(
                     model: model,
                     updates: updates,
+                    wakeLock: wakeLock,
                     onOpenSetup: onOpenSetup,
                     onRepairHooks: onRepairHooks,
                     onUninstallHooks: onUninstallHooks,

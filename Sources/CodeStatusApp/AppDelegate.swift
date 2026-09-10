@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: SettingsWindowController!
     private let settings = SettingsModel()
     private let updates = UpdateCoordinator()
+    private var wakeLock: WakeLockCoordinator!
     private let logger = Logger(subsystem: "co.codestatus", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -44,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         daemon = SessionDaemon(model: model, notifications: notifications)
         menuBar = MenuBarController(model: model, updates: updates)
+        // Reads the same projection every other surface reads, rather than
+        // keeping its own view of what is running.
+        wakeLock = WakeLockCoordinator(sessions: { [model] in model.sessions })
 
         // "Quiet" is the only precondition for swapping the app underneath the
         // user, and it means nobody is mid-turn or being asked something. A
@@ -54,9 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         daemon.onRegistryChanged = { [weak self] in
             self?.menuBar.refresh()
+            // Every turn boundary is a registry change, so the lock follows the
+            // agents without a timer of its own.
+            self?.wakeLock.reevaluate()
         }
         daemon.start()
         updates.start()
+        wakeLock.start()
 
         // First run walks the user through permissions and hook installation.
         // On later launches we ask for notification permission directly, since
@@ -227,6 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         daemon.stop()
+        // The kernel would drop the assertion with the process anyway; released
+        // here so a quit never leaves even a momentary claim on the machine.
+        wakeLock.stop()
     }
 
     private func wireInteractions() {
@@ -240,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = SettingsWindowController(
             model: settings,
             updates: updates,
+            wakeLock: wakeLock,
             onOpenSetup: { [weak self] in self?.onboarding.reopen() },
             onRepairHooks: { [weak self] in self?.repairHooks() },
             onUninstallHooks: { [weak self] in self?.uninstallHooks() },
@@ -303,6 +315,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applySettings() {
         notifications.preferences = settings.notificationPreferences
+        wakeLock.engagement = settings.keepAwakeEngagement
+        wakeLock.batteryFloor = settings.keepAwakeBatteryFloor
+        // Last, so the re-evaluation it triggers sees the other two already set.
+        wakeLock.isEnabled = settings.keepAwakeEnabled
     }
 
     /// Removes our entries from both agents' configuration.

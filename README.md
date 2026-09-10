@@ -193,6 +193,30 @@ Why the gaps:
   mean writing to a TTY or faking keystrokes, which can land your text in the wrong place. It
   will be enabled only for sessions CodeStatus starts itself through a PTY.
 
+## Keeping the Mac awake
+
+Off by default. Turned on in Settings › Sleep, CodeStatus holds a
+`PreventUserIdleSystemSleep` assertion while an agent is mid-turn, so a long turn is not
+interrupted by the Mac idling out from under it. It releases the moment the turn ends.
+
+It also releases while an agent is **waiting on you**. An agent blocked on an approval or a
+question is making no progress, so holding the machine awake spends battery for nothing. This is
+the one part that needs a real lifecycle state to get right: anything watching CPU or process
+liveness cannot tell "working" from "waiting for a human", and so stays awake through every
+approval prompt. On battery it also releases below a floor you set, and it honours Low Power Mode.
+
+**Closing the lid still sleeps the Mac, and we do not pretend otherwise.** Lid close is a
+separate path that ignores every assertion an unprivileged process can hold — Apple's own
+documentation for the idle-sleep assertion says the system "may still sleep for lid close". Two
+assertion types look like they would cover it and neither does: `PreventSystemSleep` and the
+private `InternalPreventSleep` are both *accepted* from an app like this one and then not counted
+in `powerd`'s aggregate, so they have no effect. Suppressing lid close needs `pmset disablesleep`,
+which needs root and sets a persistent system-wide flag — a different feature with a different
+risk profile, and not one to hide behind a checkbox.
+
+Display sleep is deliberately not held: the screen is the biggest draw on the machine, and
+nobody is looking at it.
+
 ## Updates
 
 CodeStatus updates itself, and tries hard not to be noticed doing it.
