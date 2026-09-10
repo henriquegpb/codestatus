@@ -52,6 +52,10 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 ok "$(node --version)"
+if ! node -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)"; then
+  fail "$(node --version) is too old; the app needs Node.js 22.12 or newer."
+  exit 1
+fi
 
 # --- 2. what this desktop can and cannot do ----------------------------------
 # Said before anything is installed rather than discovered afterwards. Neither
@@ -112,6 +116,19 @@ cd "$root"
 npm install --no-audit --no-fund
 ok "installed"
 
+# Recent Electron npm packages keep the platform binary out of the package
+# tarball. Fetch it explicitly when npm has installed only the JavaScript shim.
+electron="$root/node_modules/electron/dist/electron"
+if [ ! -x "$electron" ]; then
+  warn "fetching the Electron binary"
+  node node_modules/electron/install.js
+fi
+if [ ! -x "$electron" ]; then
+  fail "the Electron binary is not at $electron"
+  exit 1
+fi
+ok "Electron runtime ready"
+
 # --- 4. tests ----------------------------------------------------------------
 # Run on the target machine rather than trusted from CI. The whole point of the
 # platform seam is that it is checked where it will run.
@@ -121,12 +138,6 @@ npm test
 ok "all suites passed"
 
 # --- 5. the desktop entry ----------------------------------------------------
-
-electron="$root/node_modules/electron/dist/electron"
-if [ ! -x "$electron" ]; then
-  fail "the Electron binary is not at $electron"
-  exit 1
-fi
 
 applications="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 entry="$applications/codestatus.desktop"

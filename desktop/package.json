@@ -21,14 +21,16 @@
     "test:platform": "node test/platform.test.js",
     "test:titles": "node test/titles.test.js",
     "test:transport": "node test/transport.test.js",
+    "test:tray:linux": "bash test/linux-tray-integration.sh",
+    "test:package:linux": "bash test/linux-package.test.sh",
     "preview": "electron test/preview.js",
     "icons": "electron test/render-icons.js",
     "dist": "electron-builder --win",
     "dist:linux": "electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^43.4.1",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.codestatus.windows",

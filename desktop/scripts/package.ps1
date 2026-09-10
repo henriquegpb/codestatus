@@ -55,7 +55,7 @@ On the other computer:
 
      Add -StartWithWindows if you want it to come up with Windows.
 
-Prerequisite on the target: Node.js 18+ (https://nodejs.org). The installer
+Prerequisite on the target: Node.js 22.12+ (https://nodejs.org). The installer
 checks and stops with a clear message if it is missing.
 "@
 } finally {

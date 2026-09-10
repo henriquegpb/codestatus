@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Resolve version
         id: version
@@ -93,7 +93,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Resolve version
         id: version
@@ -124,6 +124,12 @@ jobs:
       # repository yet.
       - name: Build the packages
         run: npm run dist:linux
+
+      - name: Verify the Debian sandbox policy
+        run: |
+          deb=$(find dist -maxdepth 1 -name '*-amd64.deb' -print -quit)
+          test -n "$deb" || { echo "no amd64 .deb was built"; exit 1; }
+          npm run test:package:linux -- "$deb"
 
       # The same stable-name trick the Windows job uses, for the same reason:
       # /releases/latest/download/<name> needs a filename that does not move.
