@@ -62,11 +62,11 @@ if ! dbus-run-session -- bash -euo pipefail -c '
   app=$!
 
   for _ in $(seq 1 100); do
-    [ -f "$CODESTATUS_TRAY_MARKER" ] && break
+    [ -s "$CODESTATUS_TRAY_MARKER" ] && break
     kill -0 "$app" 2>/dev/null || break
     sleep 0.1
   done
-  [ -f "$CODESTATUS_TRAY_MARKER" ] || {
+  [ -s "$CODESTATUS_TRAY_MARKER" ] || {
     echo "the app did not register a tray item" >&2
     cat "$CODESTATUS_TRAY_LOG" >&2
     exit 1
