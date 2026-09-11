@@ -69,7 +69,7 @@ public struct AgentEvidence: Sendable, Equatable {
     public var summary: String {
         if isRunning { return "Running right now" }
         if executable != nil, editorExtension != nil {
-            return "Command line and editor extension — one setup covers both"
+            return "Command line and editor extension. One setup covers both"
         }
         if editorExtension != nil { return "Editor extension" }
         if executable != nil { return "Command line" }

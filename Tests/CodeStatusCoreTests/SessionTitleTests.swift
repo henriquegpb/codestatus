@@ -412,7 +412,7 @@ struct SessionTitleTests {
 
         session.sessionTitle = "Situação da infraestrutura WAHA"
         #expect(session.announcement("Open the session to answer.")
-            == "Situação da infraestrutura WAHA — Open the session to answer.")
+            == "Situação da infraestrutura WAHA: Open the session to answer.")
         // The line the banner leads with stays locative, and stays the repo.
         #expect(session.displayName == "backend")
     }

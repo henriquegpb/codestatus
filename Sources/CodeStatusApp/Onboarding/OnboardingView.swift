@@ -150,7 +150,7 @@ struct OnboardingView: View {
                         Text(agent.evidence.summary)
                             .font(.system(size: 12)).foregroundStyle(.secondary)
                         if !agent.evidence.isPresent {
-                            Text("Connect it anyway if you have it — we only look in the usual places, and installers do not always use them.")
+                            Text("Connect it anyway if you have it. We only look in the usual places, and installers do not always use them.")
                                 .font(.system(size: 11)).foregroundStyle(.tertiary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -240,7 +240,7 @@ struct OnboardingView: View {
                     // spinner that can never resolve. Say so rather than let
                     // them conclude the app is broken.
                     if !plan.evidence.isPresent && !plan.isVerified {
-                        Text("We did not find \(plan.provider.displayName) on this Mac. If you do not use it, ignore this row — the hooks we wrote do nothing until it runs.")
+                        Text("We did not find \(plan.provider.displayName) on this Mac. If you do not use it, ignore this row: the hooks we wrote do nothing until it runs.")
                             .font(.system(size: 11)).foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -335,7 +335,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("CodeStatus is watching.").font(.system(size: 13))
             counterPreview
-            Text("If an agent ever goes quiet, reopen this from Settings › Agents — it re-detects every time, and there is a Repair button next to it.")
+            Text("If an agent ever goes quiet, reopen this from Settings › Agents. It re-detects every time, and there is a Repair button next to it.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

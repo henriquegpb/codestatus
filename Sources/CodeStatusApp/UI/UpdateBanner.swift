@@ -36,7 +36,7 @@ struct UpdateBanner: View {
         case .idle, .checking:
             return nil
         case .available(let version):
-            return "Version \(version) is ready — it will install when nothing is running."
+            return "Version \(version) is ready. It installs when nothing is running."
         case .installing(let version):
             return "Installing \(version)…"
         case .unavailable(let why):

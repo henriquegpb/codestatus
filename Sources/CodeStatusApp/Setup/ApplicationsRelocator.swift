@@ -64,7 +64,7 @@ enum ApplicationsRelocator {
         case .translocated:
             "CodeStatus is running from a read-only copy macOS made because it "
                 + "was opened straight from the download. Left here, updates cannot "
-                + "install and Open at Login will not work — and neither failure "
+                + "install and Open at Login will not work, and neither failure "
                 + "announces itself."
         default:
             "CodeStatus works best from the Applications folder. Left where it "

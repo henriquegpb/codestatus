@@ -60,7 +60,7 @@ struct DiagnosticsBuilder {
     /// is a model-written summary of what the user was working on.
     static func summarize(_ session: AgentSession) -> String {
         let host = session.hostApplication == .unknown ? "" : " in \(session.hostApplication.displayName)"
-        return "\(session.displayName) — \(session.provider.displayName) — \(session.state.rawValue)\(host)"
+        return "\(session.displayName) · \(session.provider.displayName) · \(session.state.rawValue)\(host)"
     }
 
     private func spoolCount() -> Int {
@@ -71,7 +71,7 @@ struct DiagnosticsBuilder {
     private func notificationStatus() async -> String {
         switch await notifications.authorizationStatus() {
         case .authorized: return "authorised"
-        case .denied: return "denied — enable CodeStatus in System Settings › Notifications"
+        case .denied: return "denied: enable CodeStatus in System Settings › Notifications"
         case .notDetermined: return "not yet requested"
         case .provisional: return "provisional"
         case .ephemeral: return "ephemeral"
@@ -195,11 +195,11 @@ struct DiagnosticsBuilder {
         evidence hookEvidence: [AgentProvider: HookEvidence]
     ) -> String? {
         if let seen = hookEvidence[provider] {
-            return "Hooks confirmed running — last event \(seen.lastSeen.formatted(.relative(presentation: .named)))"
+            return "Hooks confirmed running. Last event \(seen.lastSeen.formatted(.relative(presentation: .named)))"
         }
         if !installed {
             return evidence.isPresent
-                ? "Found (\(evidence.summary.lowercased())) — hooks not installed yet"
+                ? "Found (\(evidence.summary.lowercased())). Hooks not installed yet"
                 : "Not found. Setup can still connect it if you have it."
         }
         return provider == .codex ? CodexHookInstaller.trustInstructions : "No events received yet"

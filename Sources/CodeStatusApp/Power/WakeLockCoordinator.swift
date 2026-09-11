@@ -123,24 +123,24 @@ final class WakeLockCoordinator {
         case .hold(let reason):
             switch reason {
             case .always:
-                return "Holding — set to always"
+                return "Holding: set to always"
             case .agentsWorking(let count):
                 return count == 1
-                    ? "Holding — 1 agent working"
-                    : "Holding — \(count) agents working"
+                    ? "Holding: 1 agent working"
+                    : "Holding: \(count) agents working"
             case .disabled, .noAgentsWorking, .batteryLow, .lowPowerMode:
                 return "Holding"
             }
         case .release(let reason):
             switch reason {
             case .disabled:
-                return "Off — this Mac sleeps normally"
+                return "Off: this Mac sleeps normally"
             case .noAgentsWorking:
-                return "Not holding — no agent is working"
+                return "Not holding: no agent is working"
             case .batteryLow(let percentage, let floor):
-                return "Not holding — battery \(percentage)%, below the \(floor)% floor"
+                return "Not holding: battery \(percentage)%, below the \(floor)% floor"
             case .lowPowerMode:
-                return "Not holding — Low Power Mode is on"
+                return "Not holding: Low Power Mode is on"
             case .always, .agentsWorking:
                 return "Not holding"
             }

@@ -122,7 +122,7 @@ enum Uninstaller {
             var lines = ["Hook entries removed from \(outcome.removedFrom.formatted(.list(type: .and)))."]
             lines.append("Open sessions keep running; they simply stop reporting.")
             if !outcome.trashedApp {
-                lines.append("You can drag CodeStatus to the Trash now — nothing is left behind.")
+                lines.append("You can drag CodeStatus to the Trash now. Nothing is left behind.")
             }
             alert.informativeText = lines.joined(separator: "\n\n")
             alert.alertStyle = .informational

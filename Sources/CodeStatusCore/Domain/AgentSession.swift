@@ -334,7 +334,7 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
     /// is the surface that makes you stop what you are doing.
     public func announcement(_ sentence: String) -> String {
         guard let agentTitle else { return sentence }
-        return "\(agentTitle) — \(sentence)"
+        return "\(agentTitle): \(sentence)"
     }
 
     /// How long the session has been in its current state.

@@ -230,7 +230,7 @@ public extension DiagnosticsReport {
         lines.append("## Adapters")
         for adapter in adapters {
             let version = adapter.version.map { " \($0)" } ?? ""
-            let detail = adapter.detail.map { " — \($0)" } ?? ""
+            let detail = adapter.detail.map { ": \($0)" } ?? ""
             lines.append("- \(adapter.name)\(version): \(adapter.state.displayName)\(detail)")
         }
         lines.append("")
