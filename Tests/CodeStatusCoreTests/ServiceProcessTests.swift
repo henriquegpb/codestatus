@@ -56,6 +56,80 @@ struct ServiceProcessTests {
         #expect(AgentIdentification.identify(executablePath: Self.vsCodeCodex) == nil)
     }
 
+    /// The second shape of the same mistake, found the same way: six permanent
+    /// "Codex sessions aren't reporting" rows on a machine with no Codex session
+    /// open at all. They were the ChatGPT desktop app's plugin hosts, a pair of
+    /// them per host, alive for days. Neither existing guard caught them — the
+    /// path is not under the VS Code extension, and the subcommand is `sandbox`
+    /// rather than `app-server` — so the warning could never clear, and the one
+    /// thing it told the user to do would not have helped.
+    @Test("Codex's plugin app-server is never a session", arguments: [
+        "/Users/x/.codex/plugins/.plugin-appserver/codex",
+        "/Users/x/.codex/plugins/.plugin-appserver/nested/codex",
+    ])
+    func pluginAppServerIsAService(path: String) {
+        #expect(AgentIdentification.identify(executablePath: path) == nil)
+    }
+
+    /// Excluded twice over, on purpose: the path check survives a renamed
+    /// subcommand, and the subcommand check survives a moved binary.
+    @Test("The sandbox subcommand is a service wherever it runs from")
+    func sandboxIsAService() {
+        #expect(AgentIdentification.namesAServiceSubcommand(["codex", "sandbox"]))
+        #expect(AgentIdentification.namesAServiceSubcommand(
+            ["codex", "sandbox", "-c", "shell_environment_policy.inherit=all"]
+        ))
+    }
+
+    /// A plugin directory is not the same as the plugin host's own directory.
+    @Test("An ordinary Codex under a plugins directory is still a session")
+    func pluginsDirectoryAloneIsNotAService() {
+        let identity = AgentIdentification.identify(
+            executablePath: "/Users/x/.codex/plugins/whatever/codex"
+        )
+        #expect(identity?.provider == .codex)
+    }
+
+    /// The half of the fix that is easy to forget: excluding a service from
+    /// discovery does nothing about the ones already written to the snapshot, and
+    /// those are alive by definition, which is why they were a problem at all.
+    @Test("A restored session that is no longer an agent is dropped")
+    func restoreDropsFormerAgents() {
+        var service = AgentSession(
+            id: SessionID("codex:pid-84072"), provider: .codex,
+            now: Date(timeIntervalSince1970: 0), sourceAdapter: "processWatcher"
+        )
+        service.pid = 84072
+        service.processStartTime = 1_789_070_921_465_806
+
+        let kept = StatePersistence.filterToLiveSessions(
+            [service],
+            isAlive: { _, _ in true },
+            isStillAnAgent: { _ in false }
+        )
+        #expect(kept.isEmpty)
+    }
+
+    /// A session the agent itself reported outranks anything inferred from a
+    /// path, so re-identification must never evict one.
+    @Test("A restored session with hook evidence survives re-identification")
+    func restoreKeepsReportedSessions() {
+        var reported = AgentSession(
+            id: SessionID("claudeCode:abc"), provider: .claudeCode,
+            now: Date(timeIntervalSince1970: 0), sourceAdapter: "hook"
+        )
+        reported.pid = 4242
+        reported.processStartTime = 1_789_070_921_465_806
+        reported.hasHookEvidence = true
+
+        let kept = StatePersistence.filterToLiveSessions(
+            [reported],
+            isAlive: { _, _ in true },
+            isStillAnAgent: { _ in false }
+        )
+        #expect(kept.count == 1)
+    }
+
     @Test("The Codex desktop CLI is still a session")
     func codexAppIsASession() {
         let identity = AgentIdentification.identify(executablePath: Self.codexApp)

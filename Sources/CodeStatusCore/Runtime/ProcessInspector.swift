@@ -112,9 +112,22 @@ public enum AgentIdentification {
     /// them. Counting one as a session puts a permanent phantom row in the HUD —
     /// which is exactly what `codex … app-server` did, since the ChatGPT VS Code
     /// extension starts one at launch whether or not anyone opens Codex.
+    /// `sandbox` is here for the same reason as the rest: it runs one command
+    /// under Codex's sandbox and exits, with no conversation attached. The
+    /// ChatGPT desktop app keeps a pair of them alive per plugin host, and
+    /// without this each pair became two permanent "not reporting" rows that no
+    /// amount of running `/hooks` could ever clear.
     static let serviceSubcommands: Set<String> = [
-        "app-server", "mcp-server", "exec-server", "remote-control",
+        "app-server", "mcp-server", "exec-server", "remote-control", "sandbox",
     ]
+
+    /// Directory Codex keeps its plugin app-server binary in.
+    ///
+    /// Belt and braces with ``serviceSubcommands``, and worth both: this one is
+    /// structural rather than a guess about a word, so it holds even if the
+    /// subcommand is renamed, and it cannot be tripped by a user's prompt the
+    /// way a token match can.
+    private static let codexPluginServiceComponent = ".plugin-appserver"
 
     /// Whether reading `argv` could add anything the path did not already say.
     ///
@@ -166,6 +179,13 @@ public enum AgentIdentification {
             return AgentIdentity(
                 provider: .claudeCode, hostApplication: .vsCode, evidence: .editorExtensionBundle
             )
+        }
+        if name == "codex", components.contains(codexPluginServiceComponent) {
+            // Codex's own plugin host, not a session. Same shape of mistake as
+            // the extension's app-server below: a long-lived helper with no
+            // conversation, which can never report a hook and so accumulated as
+            // a permanently unreported row.
+            return nil
         }
         if name == "codex", components.contains(where: { $0.hasPrefix(codexExtensionPrefix) }) {
             // Not a session. The ChatGPT extension runs everything through a

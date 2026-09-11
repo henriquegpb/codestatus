@@ -82,13 +82,26 @@ public struct StatePersistence: Sendable {
     /// A session we cannot check at all is also dropped. A phantom `free` costs
     /// the user a click and their trust; re-discovering a live session costs the
     /// process watcher one sweep.
+    /// - Parameters:
+    ///   - isAlive: whether that exact process still exists.
+    ///   - isStillAnAgent: whether it would still be identified as one today.
+    ///     Liveness alone is not enough. A build that learns a process it used to
+    ///     count is really a background service must forget the ones it already
+    ///     wrote down, and those are alive by definition — that is why they were
+    ///     a problem. Without this, a misidentification survives its own fix for
+    ///     as long as the daemon runs, which for a plugin host is days.
     public static func filterToLiveSessions(
         _ sessions: [AgentSession],
-        isAlive: (_ pid: pid_t, _ startTime: UInt64) -> Bool
+        isAlive: (_ pid: pid_t, _ startTime: UInt64) -> Bool,
+        isStillAnAgent: (_ pid: pid_t) -> Bool = { _ in true }
     ) -> [AgentSession] {
         sessions.filter { session in
             guard let pid = session.pid, let startTime = session.processStartTime else { return false }
-            return isAlive(pid, startTime)
+            guard isAlive(pid, startTime) else { return false }
+            // Sessions an agent has actually reported on are kept regardless:
+            // the hook is the agent naming itself, which outranks anything we
+            // infer from a path.
+            return session.hasHookEvidence || isStillAnAgent(pid)
         }
     }
 

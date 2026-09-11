@@ -486,9 +486,13 @@ final class SessionDaemon {
         switch persistence.load() {
         case .restored(let snapshot):
             let inspector = ProcessInspector()
+            // Asked once and reused: re-identifying per session would re-walk the
+            // whole process table for each row restored.
+            let agentPIDs = Set(inspector.discoverAgents().map(\.pid))
             let live = StatePersistence.filterToLiveSessions(
                 snapshot.sessions.filter { $0.state.isActive },
-                isAlive: { inspector.isAlive(pid: $0, startTime: $1) }
+                isAlive: { inspector.isAlive(pid: $0, startTime: $1) },
+                isStillAnAgent: { agentPIDs.contains($0) }
             )
             for session in live { registry.update(session) }
             let dropped = snapshot.sessions.count - live.count
