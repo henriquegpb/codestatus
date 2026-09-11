@@ -10,11 +10,13 @@ import SwiftUI
 struct HUDContentView: View {
     @Bindable var model: HUDModel
     var updates: UpdateCoordinator?
+    var usage: UsageCoordinator?
 
     var onOpen: ((AgentSession) -> Void)?
     var onDismiss: ((AgentSession) -> Void)?
     var onRefresh: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onOpenUsage: (() -> Void)?
     var onQuit: (() -> Void)?
 
     /// Beyond this the list scrolls instead of growing. Twelve sessions is
@@ -41,6 +43,13 @@ struct HUDContentView: View {
                 }
             }
 
+            // Sits directly above the footer rather than among the sessions:
+            // it describes the machine's spend, not any one session.
+            if let usage, usage.isEnabled {
+                Divider().opacity(0.5)
+                UsageRow(usage: usage) { onOpenUsage?() }
+            }
+
             // Full-bleed, unlike the inset dividers between rows: it separates
             // two zones rather than two items of the same kind.
             Divider().opacity(0.5)
@@ -51,6 +60,11 @@ struct HUDContentView: View {
                 onQuit: onQuit
             )
         }
+        // Here rather than at the call site so it can follow the model: a title
+        // can arrive mid-session, and the popover is often already open when it
+        // does.
+        .frame(width: model.preferredWidth)
+        .animation(.easeInOut(duration: 0.18), value: model.preferredWidth)
     }
 
     private var list: some View {
@@ -73,13 +87,22 @@ struct HUDContentView: View {
                 NotConnectedCallout(providers: model.unreportedDiagnosis.notConnected)
                     .padding(.top, model.sessions.isEmpty ? 0 : 8)
             }
-            if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
-                CodexTrustCallout(count: model.unreportedDiagnosis.codexAwaitingTrust)
-                    .padding(.top, model.sessions.isEmpty ? 0 : 8)
+            if model.showsCodexTrustCallout {
+                CodexTrustCallout(
+                    count: model.unreportedDiagnosis.codexAwaitingTrust,
+                    onDismiss: { model.dismissCodexTrustCallout() }
+                )
+                .padding(.top, model.sessions.isEmpty ? 0 : 8)
             }
-            if unexplainedCount > 0 {
-                unreportedFootnote
-            }
+            // Silent sessions with no specific advice attached are deliberately
+            // not surfaced. In practice they are editor panels left open: the
+            // process lives as long as the window, whether or not a conversation
+            // is happening in it, so the count reported open tabs rather than
+            // anything wrong, and reading "aren't reporting yet" sent people
+            // looking for a fault that was not there. They are still tracked, and
+            // still adopt a real state the moment a hook arrives.
+            //
+            // Causes that *do* have advice keep their callouts above.
         }
         // Text pinned to the edge of a popover reads as clipped, and the popover
         // supplies no inset of its own.
@@ -87,45 +110,6 @@ struct HUDContentView: View {
         .padding(.top, 8)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Silent sessions the ``UnreportedDiagnosis`` explains on its own, plus any
-    /// it cannot explain at all.
-    ///
-    /// Sessions awaiting Codex trust are excluded because they get the callout
-    /// above instead: counting them twice would say the same thing in two
-    /// voices, one of which understates it.
-    private var unexplainedCount: Int {
-        model.unreportedDiagnosis.predatesHooks + model.unreportedDiagnosis.unexplained
-    }
-
-    /// Running agents that have never sent us an event, and that we have no
-    /// specific advice about.
-    ///
-    /// A count rather than rows: they are real, so hiding them entirely would be
-    /// its own dishonesty, but each is a session whose state we would have to
-    /// invent. Almost always this means hooks were installed after the session
-    /// started — both agents read their hook configuration once, at session
-    /// start — so the fix is to start a new one, and saying so is more useful
-    /// than a row that says Unknown forever.
-    private var unreportedFootnote: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !model.sessions.isEmpty { Divider().opacity(0.15).padding(.bottom, 6) }
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                Text(
-                    unexplainedCount == 1
-                        ? "1 other session isn’t reporting yet"
-                        : "\(unexplainedCount) other sessions aren’t reporting yet"
-                )
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            }
-            .help("They started before hooks were installed. Agents read their hook configuration at session start, so a new session will report normally.")
-            .padding(.vertical, 3)
-        }
     }
 }
 
@@ -185,6 +169,7 @@ private struct NotConnectedCallout: View {
 /// it read as "nothing is happening" rather than "something is wrong".
 private struct CodexTrustCallout: View {
     let count: Int
+    var onDismiss: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -215,6 +200,21 @@ private struct CodexTrustCallout: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
+
+            Spacer(minLength: 4)
+
+            // Dismissible because the instruction is not always one the reader
+            // means to follow: plenty of people run Codex without wanting
+            // CodeStatus to see it, and for them this is a permanent banner
+            // reporting a decision they already made.
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+            .help("Hide this until another Codex session goes silent.")
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)

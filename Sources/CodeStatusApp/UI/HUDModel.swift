@@ -25,7 +25,42 @@ public final class HUDModel {
     /// Ticks so durations re-render without every view owning a timer.
     public private(set) var now: Date = Date()
 
+    /// The largest Codex trust count the user has waved away.
+    ///
+    /// Dismissal is scoped to the situation rather than permanent. Someone who
+    /// has decided not to trust these sessions should not be nagged about them
+    /// again, but a *new* silent session is new information, so the callout comes
+    /// back when the count climbs past what was dismissed, and resets entirely
+    /// once the problem clears.
+    private var dismissedCodexTrustCount = 0
+
     public init() {}
+
+    public var showsCodexTrustCallout: Bool {
+        unreportedDiagnosis.codexAwaitingTrust > dismissedCodexTrustCount
+    }
+
+    public func dismissCodexTrustCallout() {
+        dismissedCodexTrustCount = unreportedDiagnosis.codexAwaitingTrust
+    }
+
+    /// How wide the popover should be for what it currently holds.
+    ///
+    /// Two widths rather than a range, and driven by the model rather than by
+    /// SwiftUI's own sizing: every row in the list is deliberately greedy so that
+    /// its right-hand column lines up with the others, which means asking the
+    /// layout to size itself would return the maximum every time. The one thing
+    /// that genuinely needs the extra width is an agent-written session title,
+    /// since it sits beside the location and is the first thing to truncate.
+    /// Without one, the widest row is a repository name and the window was mostly
+    /// empty space.
+    public var preferredWidth: CGFloat {
+        sessions.contains { $0.secondaryLabel != nil } ? Self.titledWidth : Self.plainWidth
+    }
+
+    /// Fits "Refresh · Settings · Quit" and a quota row without crowding either.
+    static let plainWidth: CGFloat = 300
+    static let titledWidth: CGFloat = 380
 
     public var hasActiveSessions: Bool {
         !sessions.isEmpty
@@ -51,6 +86,9 @@ public final class HUDModel {
         counts = registry.counts()
         unreportedCount = registry.unreported.count
         unreportedDiagnosis = diagnosis
+        // Cleared rather than carried: once nothing is silent, the next silence
+        // is a fresh problem and deserves to be heard.
+        if diagnosis.codexAwaitingTrust == 0 { dismissedCodexTrustCount = 0 }
         self.now = now
     }
 
