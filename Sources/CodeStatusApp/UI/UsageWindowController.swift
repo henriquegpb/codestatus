@@ -499,41 +499,6 @@ private struct GroupHeading: View {
     }
 }
 
-/// What a figure on this screen actually measures, one click away.
-///
-/// Every caveat here used to be printed under the number it qualified, which
-/// meant the screen read as an argument rather than a report, and the numbers
-/// themselves competed with the prose explaining them. The caveats still matter —
-/// an estimate mistaken for an invoice is the failure this app most wants to
-/// avoid — so they are kept in full and moved behind a target, rather than
-/// shortened into something that no longer says the true thing.
-private struct InfoTip: View {
-    let text: String
-    @State private var isPresented = false
-
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Button { isPresented.toggle() } label: {
-            Image(systemName: "info.circle")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("What this means")
-        // Also on hover, so the keyboard-free path to it is not a click that
-        // opens something the reader then has to dismiss.
-        .help(text)
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            Text(text)
-                .font(.system(size: 11))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: 260, alignment: .leading)
-                .padding(12)
-        }
-    }
-}
-
 private struct SectionTitle: View {
     let title: String
     var note: String?
