@@ -71,6 +71,115 @@ func runtimeDirectory() -> String? {
     return string(from: home) + "/Library/Application Support/CodeStatus/run"
 }
 
+// MARK: - Status line mode
+
+/// Claude Code's status line is the only channel that carries plan quota.
+///
+/// `rate_limits` — how much of the five-hour and weekly windows is spent — and
+/// `context_window.used_percentage` are pushed to the status line command on
+/// every render and are never written to disk by the agent. No hook event
+/// carries them, which is why this mode exists at all.
+///
+/// It is a separate path from the event hook because the contract differs: this
+/// one must also *print*, since whatever it writes to stdout becomes the user's
+/// status line.
+func runStatusLineMode(chain: String?) -> Never {
+    var payload = readAllDraining(0, limit: maxPayloadBytes)
+    let metrics = StatusScanner.scan(payload)
+
+    // Written before the chained command runs, so a slow or broken status line
+    // of the user's own cannot cost us the reading.
+    if !metrics.isEmpty, let runDirectory = runtimeDirectory() {
+        writeStatusMetrics(directory: runDirectory + "/metrics", metrics: metrics)
+    }
+
+    // Hand the untouched payload to whatever status line the user already had,
+    // and let its output be the status line. Claiming this slot must not cost
+    // anyone the configuration they came with — it is a single slot, unlike
+    // hooks, so there is no way to simply add ourselves alongside.
+    if let chain, !chain.isEmpty {
+        runChainedStatusLine(command: chain, payload: payload)
+    } else {
+        // Nobody else is drawing it, so draw the thing we just read. A status
+        // line that reports the quota is more use than an empty one, and it is
+        // the user's own number.
+        writeStatusSummary(metrics)
+    }
+
+    for i in payload.indices { payload[i] = 0 }
+    payload = []
+    exit(0)
+}
+
+/// Runs the status line the user already had, feeding it the same payload.
+///
+/// Its stdout is inherited, so whatever it prints becomes the status line and
+/// ours never appears — the user sees exactly what they configured. `posix_spawn`
+/// rather than `popen`, which Swift does not expose.
+///
+/// Bounded like everything else here: if the child hangs, we stop waiting and
+/// leave. A status line that renders late is a nuisance; one that wedges the
+/// agent's render loop is a bug we would have introduced.
+func runChainedStatusLine(command: String, payload: [UInt8]) {
+    var fds: [Int32] = [-1, -1]
+    guard pipe(&fds) == 0 else { return }
+    let (readEnd, writeEnd) = (fds[0], fds[1])
+
+    var actions: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&actions)
+    posix_spawn_file_actions_adddup2(&actions, readEnd, 0)
+    posix_spawn_file_actions_addclose(&actions, writeEnd)
+    defer { posix_spawn_file_actions_destroy(&actions) }
+
+    var pid: pid_t = 0
+    let spawned = "/bin/sh".withCString { shell -> Int32 in
+        "-c".withCString { dashC -> Int32 in
+            command.withCString { body -> Int32 in
+                var argv: [UnsafeMutablePointer<CChar>?] = [
+                    strdup(shell), strdup(dashC), strdup(body), nil,
+                ]
+                defer { for argument in argv where argument != nil { free(argument) } }
+                return posix_spawn(&pid, shell, &actions, nil, &argv, environ)
+            }
+        }
+    }
+    close(readEnd)
+    guard spawned == 0 else { close(writeEnd); return }
+
+    // SIGPIPE would kill us outright if the child exits without reading.
+    signal(SIGPIPE, SIG_IGN)
+    _ = payload.withUnsafeBufferPointer { buffer -> Int in
+        guard let base = buffer.baseAddress else { return 0 }
+        var written = 0
+        while written < buffer.count {
+            let n = write(writeEnd, base + written, buffer.count - written)
+            if n <= 0 { break }
+            written += n
+        }
+        return written
+    }
+    close(writeEnd)
+
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+}
+
+// MARK: - Dispatch
+
+/// The value of `--chain`, if the installer wrapped an existing status line.
+func argumentValue(_ name: String) -> String? {
+    var iterator = CommandLine.arguments.makeIterator()
+    _ = iterator.next()
+    while let argument = iterator.next() {
+        if argument == name { return iterator.next() }
+    }
+    return nil
+}
+
+if CommandLine.arguments.contains("--status-line") {
+    runStatusLineMode(chain: argumentValue("--chain"))
+}
+
 // MARK: - Read and reduce
 
 // Always drain stdin fully, so the agent's write to us cannot fail with EPIPE.
