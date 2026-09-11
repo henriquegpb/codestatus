@@ -217,6 +217,43 @@ risk profile, and not one to hide behind a checkbox.
 Display sleep is deliberately not held: the screen is the biggest draw on the machine, and
 nobody is looking at it.
 
+## What your agents are costing
+
+The popover carries one line — today's spend, and how much of the plan's quota is gone — and
+clicking it opens the breakdown by day and by model.
+
+**The numbers come from your own machine.** Agents already write a transcript of every session,
+and each assistant message in it carries the token counts the request was billed for. CodeStatus
+reads those counts and prices them at published list API rates. Nothing is uploaded, and no
+account is involved — the "no server, no telemetry" promise above is unchanged.
+
+**Only the token counts are read.** Those transcripts also contain your prompts, the model's
+replies, tool inputs and file contents. The scanner walks past every key it was not asked for
+without copying its bytes, so conversation content is structurally incapable of reaching the
+screen, a log, or the snapshot — the same construction as the hook's scanner, and tested the same
+way. It can be switched off in Settings › Usage.
+
+**It is an estimate, not an invoice.** A subscription, pay-as-you-go overage, batch pricing, or a
+negotiated rate all differ from list rates, and none of them are observable from a transcript.
+What it is good for is comparison: which day cost four times the others, which model the spend is
+actually in, and whether caching is working.
+
+Two limits worth stating:
+
+- **Only Codex reports how much quota is left.** Its rollout files carry the used percentage for
+  the 5-hour and weekly windows, with reset times. Claude Code publishes no equivalent anywhere
+  on disk — searched across every transcript and configuration file — so that row simply does not
+  appear for a Claude-only machine rather than showing a bar we cannot fill honestly.
+- **Codex tokens are counted but not priced.** Its models' rates are not ours to publish and were
+  not verified against a source, and an invented rate in a table that looks authoritative is worse
+  than a stated gap. Any model without a known rate is named in the breakdown rather than folded
+  silently into the total.
+
+The full pass reads every transcript once — 213 files and 83,000 lines took 5.2 seconds on the
+machine it was developed on — and every pass after that reads only the bytes appended since,
+which takes about 15 milliseconds. A line still being written is left for the next pass rather
+than parsed in half.
+
 ## Updates
 
 CodeStatus updates itself, and tries hard not to be noticed doing it.
