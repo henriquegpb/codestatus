@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = SettingsModel()
     private let updates = UpdateCoordinator()
     private var wakeLock: WakeLockCoordinator!
+    private var usage: UsageCoordinator!
+    private var usageWindow: UsageWindowController!
     private let logger = Logger(subsystem: "co.codestatus", category: "app")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -36,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         observeSecondLaunches()
         installHookBinaryIfNeeded()
+        installStatusLineIfNeeded()
 
         opener = SessionOpener()
         notifications = NotificationCoordinator(
@@ -44,7 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         daemon = SessionDaemon(model: model, notifications: notifications)
-        menuBar = MenuBarController(model: model, updates: updates)
+        usage = UsageCoordinator()
+        menuBar = MenuBarController(model: model, updates: updates, usage: usage)
         // Reads the same projection every other surface reads, rather than
         // keeping its own view of what is running.
         wakeLock = WakeLockCoordinator(sessions: { [model] in model.sessions })
@@ -61,10 +65,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Every turn boundary is a registry change, so the lock follows the
             // agents without a timer of its own.
             self?.wakeLock.reevaluate()
+            // A turn boundary is when new usage has just been written, and the
+            // pass after the first is incremental, so this costs milliseconds.
+            self?.usage.refresh()
         }
         daemon.start()
         updates.start()
         wakeLock.start()
+        usage.start()
 
         // First run walks the user through permissions and hook installation.
         // On later launches we ask for notification permission directly, since
@@ -235,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         daemon.stop()
+        usage.stop()
         // The kernel would drop the assertion with the process anyway; released
         // here so a quit never leaves even a momentary claim on the machine.
         wakeLock.stop()
@@ -257,6 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onUninstallHooks: { [weak self] in self?.uninstallHooks() },
             onUninstall: { Uninstaller.run() }
         )
+        usageWindow = UsageWindowController(usage: usage)
         settings.onChange = { [weak self] in self?.applySettings() }
         applySettings()
 
@@ -267,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.onQuit = { NSApp.terminate(nil) }
         menuBar.onOpenDiagnostics = { [weak self] in self?.diagnostics.show() }
         menuBar.onOpenPreferences = { [weak self] in self?.settingsWindow.show() }
+        menuBar.onOpenUsage = { [weak self] in self?.usageWindow.show() }
         menuBar.onUninstall = { Uninstaller.run() }
         // A sweep, not a restart: it finds sessions that started before their
         // hooks were installed, which is the case the button exists for.
@@ -319,6 +330,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wakeLock.batteryFloor = settings.keepAwakeBatteryFloor
         // Last, so the re-evaluation it triggers sees the other two already set.
         wakeLock.isEnabled = settings.keepAwakeEnabled
+        usage.isEnabled = settings.usageEnabled
+    }
+
+    /// Claims Claude Code's status line, which is the only channel that carries
+    /// plan quota.
+    ///
+    /// Separate from the hook installers because the slot holds one command
+    /// rather than a list: an existing status line is wrapped, never replaced.
+    private func installStatusLineIfNeeded() {
+        let paths = RuntimePaths()
+        let installer = StatusLineInstaller(
+            settingsURL: ClaudeHookInstaller.settingsURL(home: paths.home),
+            hookBinary: paths.hookBinary
+        )
+        do {
+            switch try installer.install() {
+            case .installed:
+                logger.info("claimed the Claude Code status line")
+            case .wrapped(let previous):
+                logger.info("wrapped an existing status line: \(previous, privacy: .public)")
+            case .refreshed:
+                logger.info("refreshed the status line entry")
+            case .alreadyInstalled:
+                break
+            }
+        } catch {
+            logger.error("status line install failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Removes our entries from both agents' configuration.
@@ -331,6 +370,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             _ = try ClaudeHookInstaller(paths: paths).uninstall()
             _ = try CodexHookInstaller(paths: paths).uninstall()
+            // Restores whatever status line we wrapped, rather than deleting the
+            // key and taking the user's own configuration with it.
+            _ = try StatusLineInstaller(
+                settingsURL: ClaudeHookInstaller.settingsURL(home: paths.home),
+                hookBinary: paths.hookBinary
+            ).uninstall()
             logger.info("removed CodeStatus hook entries")
         } catch {
             logger.error("uninstall failed: \(error.localizedDescription, privacy: .public)")

@@ -21,16 +21,20 @@ final class MenuBarController {
     var onRefresh: (() -> Void)?
     var onOpenDiagnostics: (() -> Void)?
     var onOpenPreferences: (() -> Void)?
+    var onOpenUsage: (() -> Void)?
     var onUninstall: (() -> Void)?
     var onQuit: (() -> Void)?
 
     /// Held so the popover can show an update that is waiting for a quiet
     /// moment, and offer to take it now.
     private let updates: UpdateCoordinator
+    /// Held for the popover's usage row, which reads today's spend from it.
+    private let usage: UsageCoordinator?
 
-    init(model: HUDModel, updates: UpdateCoordinator) {
+    init(model: HUDModel, updates: UpdateCoordinator, usage: UsageCoordinator? = nil) {
         self.model = model
         self.updates = updates
+        self.usage = usage
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
         configurePopover()
@@ -78,9 +82,9 @@ final class MenuBarController {
         if !model.unreportedDiagnosis.notConnected.isEmpty {
             let names = model.unreportedDiagnosis.notConnected.keys
                 .map(\.displayName).sorted().formatted(.list(type: .and))
-            codexNote = "\(names) is running but not connected — open CodeStatus Settings › Agents"
+            codexNote = "\(names) is running but not connected. Open CodeStatus Settings › Agents"
         } else if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
-            codexNote = "Codex isn’t reporting — run /hooks in Codex to trust CodeStatus"
+            codexNote = "Codex isn’t reporting. Run /hooks in Codex to trust CodeStatus"
         } else {
             codexNote = nil
         }
@@ -95,8 +99,8 @@ final class MenuBarController {
             )
             button.toolTip = codexNote
                 ?? (model.unreportedCount > 0
-                    ? "CodeStatus — \(model.unreportedCount) session(s) found but not reporting"
-                    : "CodeStatus — no active agent sessions")
+                    ? "CodeStatus: \(model.unreportedCount) session(s) found but not reporting"
+                    : "CodeStatus: no active agent sessions")
             return
         }
 
@@ -149,22 +153,26 @@ final class MenuBarController {
             rootView: HUDContentView(
                 model: model,
                 updates: updates,
+                usage: usage,
                 onOpen: { [weak self] in self?.onOpenSession?($0) },
                 onDismiss: { [weak self] in self?.onDismissSession?($0) },
                 onRefresh: { [weak self] in self?.onRefresh?() },
-                // Both close the popover first: Settings opens a window that
+                // These all close the popover first: each opens a window that
                 // would otherwise appear behind it, and a Quit that leaves the
                 // popover on screen while the app dies looks like a crash.
                 onOpenSettings: { [weak self] in
                     self?.popover.performClose(nil)
                     self?.onOpenPreferences?()
                 },
+                onOpenUsage: { [weak self] in
+                    self?.popover.performClose(nil)
+                    self?.onOpenUsage?()
+                },
                 onQuit: { [weak self] in
                     self?.popover.performClose(nil)
                     self?.onQuit?()
                 }
             )
-            .frame(width: 380)
         )
         // Lets the popover size itself to the list rather than to a constant.
         hosting.sizingOptions = [.preferredContentSize]

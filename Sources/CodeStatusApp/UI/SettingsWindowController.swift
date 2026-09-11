@@ -19,6 +19,7 @@ final class SettingsModel {
         static let keepAwakeEnabled = "co.codestatus.keepAwakeEnabled"
         static let keepAwakeEngagement = "co.codestatus.keepAwakeEngagement"
         static let keepAwakeBatteryFloor = "co.codestatus.keepAwakeBatteryFloor"
+        static let usageEnabled = "co.codestatus.usageEnabled"
     }
 
     var soundEnabled: Bool { didSet { persist() } }
@@ -31,6 +32,13 @@ final class SettingsModel {
     var keepAwakeEnabled: Bool { didSet { persist() } }
     var keepAwakeEngagement: WakeLockPolicy.Engagement { didSet { persist() } }
     var keepAwakeBatteryFloor: Int { didSet { persist() } }
+
+    /// Whether to read token counts out of agent transcripts.
+    ///
+    /// On by default. Nothing leaves the machine, so the app's "no telemetry"
+    /// promise is untouched — but the files it reads hold conversations, so the
+    /// switch exists and Settings says plainly what is read from them.
+    var usageEnabled: Bool { didSet { persist() } }
 
     /// Nil when not muted; otherwise when the quiet period ends.
     var mutedUntil: Date? { didSet { onChange?() } }
@@ -45,6 +53,7 @@ final class SettingsModel {
             Key.onlyWhenUnfocused: true,
             Key.keepAwakeEnabled: false,
             Key.keepAwakeBatteryFloor: WakeLockPolicy.defaultBatteryFloor,
+            Key.usageEnabled: true,
         ])
         soundEnabled = defaults.bool(forKey: Key.soundEnabled)
         notificationsEnabled = defaults.bool(forKey: Key.notificationsEnabled)
@@ -54,6 +63,7 @@ final class SettingsModel {
             rawValue: defaults.string(forKey: Key.keepAwakeEngagement) ?? ""
         ) ?? .whileAgentsWork
         keepAwakeBatteryFloor = defaults.integer(forKey: Key.keepAwakeBatteryFloor)
+        usageEnabled = defaults.bool(forKey: Key.usageEnabled)
         launchAtLogin = LoginItem.isEnabled
     }
 
@@ -65,6 +75,7 @@ final class SettingsModel {
         defaults.set(keepAwakeEnabled, forKey: Key.keepAwakeEnabled)
         defaults.set(keepAwakeEngagement.rawValue, forKey: Key.keepAwakeEngagement)
         defaults.set(keepAwakeBatteryFloor, forKey: Key.keepAwakeBatteryFloor)
+        defaults.set(usageEnabled, forKey: Key.usageEnabled)
         onChange?()
     }
 
@@ -130,9 +141,13 @@ struct SettingsView: View {
             // reason the section cannot be called "keep agents running".
             Section("Sleep") {
                 Toggle("Keep this Mac awake", isOn: $model.keepAwakeEnabled)
-                Text("Stops the idle sleep that interrupts a long turn. "
-                    + "**Closing the lid still sleeps this Mac** — macOS reserves that "
-                    + "for the system, and no app can hold it open.")
+                // Text concatenation, not String: markdown is parsed only out
+                // of a literal, so a `+` between strings renders the asterisks.
+                (
+                    Text("Stops the idle sleep that interrupts a long turn. ")
+                    + Text("**Closing the lid still sleeps this Mac**")
+                    + Text(". macOS reserves that for the system, and no app can hold it open.")
+                )
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -142,8 +157,9 @@ struct SettingsView: View {
                         Text("Always").tag(WakeLockPolicy.Engagement.always)
                     }
                     .pickerStyle(.segmented)
-                    .help("While agents work releases the moment a turn ends — and while "
-                        + "an agent is waiting on you, since nothing is progressing then.")
+                    .help("While agents work releases the moment a turn ends, and "
+                        + "while an agent is waiting on you, since nothing is "
+                        + "progressing then.")
 
                     // Deliberately not lower than 5%: below that the machine is
                     // minutes from shutting down on its own, and a floor that
@@ -167,6 +183,20 @@ struct SettingsView: View {
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
+            }
+
+            Section("Usage") {
+                Toggle("Show what my agents are costing", isOn: $model.usageEnabled)
+                (
+                    Text("Reads ")
+                    + Text("**only the token counts**")
+                    + Text(" out of the transcripts your agents already write on "
+                        + "this Mac, never the conversation. Nothing is uploaded. "
+                        + "Costs are estimated at list API rates and are not your "
+                        + "invoice.")
+                )
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("General") {
