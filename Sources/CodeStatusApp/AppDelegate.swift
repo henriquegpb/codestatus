@@ -48,10 +48,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         daemon = SessionDaemon(model: model, notifications: notifications)
         usage = UsageCoordinator()
-        menuBar = MenuBarController(model: model, updates: updates, usage: usage)
         // Reads the same projection every other surface reads, rather than
         // keeping its own view of what is running.
         wakeLock = WakeLockCoordinator(sessions: { [model] in model.sessions })
+        // Built after the lock so the popover can carry its toggle and report
+        // what it is currently doing.
+        menuBar = MenuBarController(
+            model: model, updates: updates, usage: usage,
+            settings: settings, wakeLock: wakeLock
+        )
 
         // "Quiet" is the only precondition for swapping the app underneath the
         // user, and it means nobody is mid-turn or being asked something. A

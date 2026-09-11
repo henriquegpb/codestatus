@@ -10,6 +10,8 @@ import SwiftUI
 struct HUDContentView: View {
     @Bindable var model: HUDModel
     var updates: UpdateCoordinator?
+    var settings: SettingsModel?
+    var wakeLock: WakeLockCoordinator?
     var usage: UsageCoordinator?
 
     var onOpen: ((AgentSession) -> Void)?
@@ -48,6 +50,11 @@ struct HUDContentView: View {
             if let usage, usage.isEnabled {
                 Divider().opacity(0.5)
                 UsageRow(usage: usage) { onOpenUsage?() }
+            }
+
+            if let settings {
+                Divider().opacity(0.5)
+                WakeLockRow(settings: settings, wakeLock: wakeLock)
             }
 
             // Full-bleed, unlike the inset dividers between rows: it separates
@@ -111,6 +118,68 @@ struct HUDContentView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+// MARK: - Sleep
+
+/// The one setting that belongs next to the sessions rather than in Settings.
+///
+/// It is the only preference whose right answer changes with what is on screen:
+/// you decide to hold the Mac awake *because* of the turn you are looking at,
+/// and you are looking at it here. Everything else in Settings is set once.
+///
+/// The label names idle sleep rather than the screen, because that is what the
+/// lock actually prevents and the difference matters: a screen saver or a dark
+/// display interrupts nothing, and promising otherwise would have people
+/// enabling this to fix a problem it has no bearing on. Display sleep is
+/// deliberately never held — the screen is the biggest draw on the machine, and
+/// nobody is looking at it.
+private struct WakeLockRow: View {
+    @Bindable var settings: SettingsModel
+    var wakeLock: WakeLockCoordinator?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Toggle(isOn: $settings.keepAwakeEnabled) {
+                    Text("Don't sleep while agents work")
+                        .font(.system(size: 11))
+                }
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+
+                Spacer(minLength: 4)
+
+                InfoTip(Self.explanation)
+            }
+
+            // Shown only while on, and only when it says something the checkbox
+            // does not. This is the answer to "is it actually holding right
+            // now", which the setting alone cannot give: the lock releases on
+            // battery, in Low Power Mode, and whenever no agent is mid-turn.
+            if settings.keepAwakeEnabled, let status = wakeLock?.statusDescription {
+                Text(status)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 18)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Named limits rather than a promise, because every one of them is a case
+    /// where someone would otherwise conclude the feature is broken.
+    private static let explanation =
+        "Holds off the idle sleep that would interrupt a long turn, and releases "
+        + "the moment the turn ends or an agent starts waiting on you. It does "
+        + "not keep the screen on, and it has no bearing on the screen saver: "
+        + "neither interrupts an agent. Closing the lid still sleeps this Mac, "
+        + "which macOS reserves for the system and no app can hold open. On "
+        + "battery it releases below a floor you set, and it honours Low Power "
+        + "Mode. Settings › Sleep has both, and an Always mode."
 }
 
 // MARK: - Never connected

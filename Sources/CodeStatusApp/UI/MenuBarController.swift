@@ -30,11 +30,23 @@ final class MenuBarController {
     private let updates: UpdateCoordinator
     /// Held for the popover's usage row, which reads today's spend from it.
     private let usage: UsageCoordinator?
+    /// Held so the popover can offer the sleep toggle, and show what the lock is
+    /// currently doing, without a trip through Settings.
+    private let settings: SettingsModel?
+    private let wakeLock: WakeLockCoordinator?
 
-    init(model: HUDModel, updates: UpdateCoordinator, usage: UsageCoordinator? = nil) {
+    init(
+        model: HUDModel,
+        updates: UpdateCoordinator,
+        usage: UsageCoordinator? = nil,
+        settings: SettingsModel? = nil,
+        wakeLock: WakeLockCoordinator? = nil
+    ) {
         self.model = model
         self.updates = updates
         self.usage = usage
+        self.settings = settings
+        self.wakeLock = wakeLock
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
         configurePopover()
@@ -153,6 +165,8 @@ final class MenuBarController {
             rootView: HUDContentView(
                 model: model,
                 updates: updates,
+                settings: settings,
+                wakeLock: wakeLock,
                 usage: usage,
                 onOpen: { [weak self] in self?.onOpenSession?($0) },
                 onDismiss: { [weak self] in self?.onDismissSession?($0) },
