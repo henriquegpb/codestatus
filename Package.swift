@@ -18,5 +18,6 @@ let package = Package(
         .executableTarget(name: "CodeStatusApp", dependencies: ["CodeStatusCore"]),
         .executableTarget(name: "codestatus-hook", dependencies: ["HookCore"]),
         .testTarget(name: "CodeStatusCoreTests", dependencies: ["CodeStatusCore", "HookCore"]),
+        .testTarget(name: "CodeStatusAppTests", dependencies: ["CodeStatusApp", "CodeStatusCore"]),
     ]
 )

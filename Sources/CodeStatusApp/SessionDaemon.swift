@@ -356,11 +356,16 @@ final class SessionDaemon {
                 guard let session = registry[transition.sessionID] else { continue }
                 // The stale filter is what prevents a wake from firing a burst
                 // of notifications for turns that finished hours ago.
-                if sleepWake.shouldNotify(for: transition, now: Date()) {
-                    notifications.handle(transition, session: session)
-                }
+                notifications.handle(
+                    transition, session: session,
+                    eligible: sleepWake.shouldNotify(for: transition, now: Date())
+                )
 
-            case .sessionRefreshed, .sessionRemoved:
+            case .sessionRemoved(let id):
+                notifications.cancelPendingApproval(for: id)
+                changed = true
+
+            case .sessionRefreshed:
                 changed = true
 
             case .eventDropped(let id, let reason):
@@ -454,8 +459,10 @@ final class SessionDaemon {
         for action in actions {
             switch action {
             case .saveSnapshot:
+                notifications.cancelPendingApprovals()
                 saveSnapshot()
             case .markAllReconnecting(let date):
+                notifications.cancelPendingApprovals()
                 registry.markAllReconnecting(now: date)
             case .drainSpool:
                 let report = spool.drain { [weak self] event in

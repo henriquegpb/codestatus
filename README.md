@@ -174,6 +174,11 @@ Limitations are stated, not hidden. This is what we can actually do per environm
 
 Why the gaps:
 
+- **Approval alerts have a three-second grace period on macOS.** A tool result or
+  another state change cancels the pending alert. Codex's permission hook runs before
+  automatic review, and there is no hook when execution starts, so a long command can
+  still trigger an alert after automatic approval. Its banner says "may need approval"
+  rather than claiming a human prompt is visible.
 - **Codex "Input" is no.** Codex has no `Notification` event, so "the agent is waiting for you
   to answer a question" is not observable through any official channel. Approval requests *are*,
   via `PermissionRequest`.

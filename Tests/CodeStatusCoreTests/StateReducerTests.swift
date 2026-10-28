@@ -162,14 +162,27 @@ struct AttentionTests {
         #expect(outcomes == [.ignoredUnmapped])
     }
 
-    @Test("An idle prompt still applies after the turn has stopped")
+    @Test("An idle reminder after completion refreshes the session without asking for a reply")
     func idlePromptOutranksStop() {
         var f = EventFactory()
-        let (session, _) = run(newSession(state: .busy), [
+        let (session, outcomes) = run(newSession(state: .busy), [
             f.make(.stop, at: 1),
             f.make(.notification, notification: .idlePrompt, turn: .some(nil), at: 120),
         ])
+        #expect(session.state == .free)
+        #expect(outcomes.last == .refreshed)
+        #expect(session.lastEventAt == t0.addingTimeInterval(120))
+    }
+
+    @Test("A real question after completion still asks for a reply")
+    func questionAfterCompletion() {
+        var f = EventFactory()
+        let (session, outcomes) = run(newSession(state: .busy), [
+            f.make(.stop, at: 1),
+            f.make(.elicitation, turn: .some("turn-2"), at: 2),
+        ])
         #expect(session.state == .waitingForInput)
+        #expect(outcomes.map(isStateChange) == [true, true])
     }
 
     @Test("A failed turn is never counted as free")

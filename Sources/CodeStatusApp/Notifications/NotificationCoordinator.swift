@@ -44,6 +44,9 @@ public final class NotificationCoordinator {
     public var preferences = Preferences()
 
     private let center = UNUserNotificationCenter.current()
+    // The notification center keeps its delegate weakly. Retain it for the
+    // coordinator's lifetime so opening our HUD cannot silence later banners.
+    private let presentationDelegate = NotificationPresentationDelegate()
     private let suppression: NotificationSuppressing?
     private let logger = Logger(subsystem: "co.codestatus", category: "notifications")
     private var didRequestAuthorization = false
@@ -51,9 +54,11 @@ public final class NotificationCoordinator {
     /// Notification identifiers we have already posted, so a replayed event
     /// cannot produce a second banner even if it reaches us twice.
     private var posted = EventDeduplicator(capacity: 512)
+    private let approvalDelay = ApprovalAlertDelay()
 
     public init(suppression: NotificationSuppressing? = nil) {
         self.suppression = suppression
+        center.delegate = presentationDelegate
     }
 
     // MARK: - Authorization
@@ -119,7 +124,29 @@ public final class NotificationCoordinator {
     // MARK: - Posting
 
     /// Handles one transition, posting at most one notification.
-    public func handle(_ transition: Transition, session: AgentSession, now: Date = Date()) {
+    public func handle(
+        _ transition: Transition, session: AgentSession,
+        eligible: Bool = true, now: Date = Date()
+    ) {
+        approvalDelay.handle(transition, eligible: eligible) { [weak self] in
+            let deliveryTime = transition.to == .waitingForApproval ? Date() : now
+            if transition.to == .waitingForApproval {
+                guard deliveryTime.timeIntervalSince(transition.occurredAt)
+                    <= SleepWakeCoordinator.defaultStaleThreshold else { return }
+            }
+            self?.post(transition, session: session, now: deliveryTime)
+        }
+    }
+
+    public func cancelPendingApproval(for sessionID: SessionID) {
+        approvalDelay.cancel(for: sessionID)
+    }
+
+    public func cancelPendingApprovals() {
+        approvalDelay.cancelAll()
+    }
+
+    private func post(_ transition: Transition, session: AgentSession, now: Date) {
         guard let content = Self.content(for: transition, session: session) else { return }
         guard shouldDeliver(transition, session: session, now: now) else { return }
         guard posted.admit(transition.eventID) else { return }
@@ -225,8 +252,12 @@ public final class NotificationCoordinator {
 
         switch transition.to {
         case .free:
-            // Only interesting as the end of actual work.
-            guard transition.from == .busy else { return nil }
+            // Stop can arrive while a question or approval is still recorded,
+            // without an intervening tool result. SessionStart is also free,
+            // but opening a session must never announce a completed turn.
+            guard [.busy, .waitingForApproval, .waitingForInput].contains(transition.from) else {
+                return nil
+            }
             return Content(
                 title: "\(agent) finished in \(project)",
                 body: session.announcement("Ready for another prompt."),
@@ -234,6 +265,15 @@ public final class NotificationCoordinator {
             )
 
         case .waitingForApproval:
+            // Codex's hook precedes automatic review and tool execution. A
+            // command can already be running before PostToolUse proves it.
+            if session.provider == .codex {
+                return Content(
+                    title: "\(agent) may need approval in \(project)",
+                    body: session.announcement("Check the session for a pending approval. The command may already be running."),
+                    tone: .attention
+                )
+            }
             return Content(
                 title: "\(agent) needs your approval in \(project)",
                 body: session.announcement("Open the session to review the command."),
@@ -266,6 +306,17 @@ public final class NotificationCoordinator {
         case .busy, .discovering, .reconnecting, .unknown:
             return nil
         }
+    }
+}
+
+/// macOS otherwise silences banners while CodeStatus itself is active. The
+/// session focus and mute preferences have already been checked before posting.
+final class NotificationPresentationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
     }
 }
 

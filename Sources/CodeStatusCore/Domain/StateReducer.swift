@@ -154,8 +154,16 @@ public enum StateReducer {
             return Reduction(session: session, outcome: .ignoredEnded)
         }
 
-        guard let target = targetState(for: event) else {
+        guard var target = targetState(for: event) else {
             return Reduction(session: session, outcome: .ignoredUnmapped)
+        }
+
+        // An idle reminder after Stop describes the prompt we already know is
+        // free. Turning it into a reply request announces the same completion
+        // twice and claims a question is blocking work when none is running.
+        if session.state == .free, event.kind == .notification,
+           event.notificationType == .idlePrompt {
+            target = .free
         }
 
         guard session.clock.accepts(event) else {
