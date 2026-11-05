@@ -301,9 +301,9 @@ final class SessionDaemon {
         handle(registry.removeUnreportedCodexClients(inspector.codexClientProcesses()))
         for session in registry.all where session.state.isActive {
             guard let pid = session.pid else { continue }
-            let alive = session.processStartTime.map {
-                inspector.isAlive(pid: pid, startTime: $0)
-            } ?? (inspector.snapshot(pid: pid) != nil)
+            let alive = inspector.snapshot(pid: pid).map {
+                session.matchesProcess(pid: $0.pid, startTime: $0.startTime)
+            } ?? false
             guard !alive else { continue }
             logger.info("reaping \(session.id.rawValue, privacy: .public): its process is gone")
             apply(ProcessWatcher.exitEvent(
@@ -391,7 +391,7 @@ final class SessionDaemon {
             // without this the session would sit in the list forever, since
             // nothing else was ever going to tell us about a process we never
             // subscribed to.
-            if let session = registry.all.first(where: { $0.pid == pid }), session.state.isActive {
+            for session in registry.all where session.pid == pid && session.state.isActive {
                 logger.info("pid \(pid, privacy: .public) was already gone when we went to enrich it")
                 apply(ProcessWatcher.exitEvent(
                     pid: pid,
@@ -401,29 +401,22 @@ final class SessionDaemon {
             }
             return
         }
-        guard var session = registry.all.first(where: { $0.pid == pid }) else { return }
-
-        session.parentPID = snapshot.parentPID
-        session.processStartTime = snapshot.startTime
-        if let tty = snapshot.tty {
-            session.tty = tty
-            session.controlTarget.tty = tty
-            // A tty means we can name the exact tab, not just the application.
-            session.capabilities.insert(.canIdentifyExactWindow)
+        handle(registry.enrichProcess(snapshot))
+        for var session in registry.all where session.pid == pid && session.state.isActive {
+            if session.cwd == nil { session.cwd = inspector.workingDirectory(of: pid) }
+            if let cwd = session.cwd {
+                let root = Self.gitRoot(for: cwd)
+                session.gitRoot = root
+                session.repositoryName = root.map { ($0 as NSString).lastPathComponent }
+                session.controlTarget.workspacePath = root ?? cwd
+            }
+            registry.update(session)
+            // The fix for phantom rows. Sessions born from a hook event used to
+            // reach here and never subscribe to anything, so an agent that exited
+            // without sending SessionEnd — `codex exec` does exactly this — stayed
+            // Busy until the next sleep/wake reconciliation, which might be never.
+            watchForExit(session)
         }
-        if session.cwd == nil { session.cwd = inspector.workingDirectory(of: pid) }
-        if let cwd = session.cwd {
-            let root = Self.gitRoot(for: cwd)
-            session.gitRoot = root
-            session.repositoryName = root.map { ($0 as NSString).lastPathComponent }
-            session.controlTarget.workspacePath = root ?? cwd
-        }
-        registry.update(session)
-        // The fix for phantom rows. Sessions born from a hook event used to
-        // reach here and never subscribe to anything, so an agent that exited
-        // without sending SessionEnd — `codex exec` does exactly this — stayed
-        // Busy until the next sleep/wake reconciliation, which might be never.
-        watchForExit(session)
     }
 
     /// Subscribes to a session's process so its exit is noticed even when the

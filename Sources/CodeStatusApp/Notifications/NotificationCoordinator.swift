@@ -295,8 +295,11 @@ public final class NotificationCoordinator {
             )
 
         case .ended:
-            // Only when it died mid-flight; a clean exit is not news.
-            guard transition.source == .process, transition.from != .free else { return nil }
+            // Process discovery proves existence, not work in flight. A retained
+            // discovery placeholder must not turn a clean conversation exit
+            // into a crash alert when both entries share the same process.
+            guard session.hasHookEvidence, transition.source == .process,
+                  transition.from != .free else { return nil }
             return Content(
                 title: "\(agent) stopped unexpectedly",
                 body: session.announcement("The session in \(project) is no longer running."),

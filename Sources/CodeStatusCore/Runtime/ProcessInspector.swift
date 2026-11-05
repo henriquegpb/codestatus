@@ -601,3 +601,19 @@ public struct ProcessInspector: Sendable {
         String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }
+
+public extension AgentSession {
+    /// Returns false without changing metadata if this PID has been reused.
+    @discardableResult
+    mutating func enrichProcess(_ snapshot: ProcessSnapshot) -> Bool {
+        guard matchesProcess(pid: snapshot.pid, startTime: snapshot.startTime) else { return false }
+        parentPID = snapshot.parentPID
+        processStartTime = snapshot.startTime
+        if let tty = snapshot.tty {
+            self.tty = tty
+            controlTarget.tty = tty
+            capabilities.insert(.canIdentifyExactWindow)
+        }
+        return true
+    }
+}

@@ -326,6 +326,13 @@ public struct AgentSession: Identifiable, Sendable, Codable, Equatable {
         return "\(agentTitle): \(sentence)"
     }
 
+    /// Missing start times can be enriched; conflicting known start times
+    /// identify different incarnations of a reused PID.
+    public func matchesProcess(pid: pid_t, startTime: UInt64?) -> Bool {
+        self.pid == pid && (processStartTime == nil || startTime == nil
+            || processStartTime == startTime)
+    }
+
     /// How long the session has been in its current state.
     public func duration(at now: Date) -> TimeInterval {
         now.timeIntervalSince(stateChangedAt)

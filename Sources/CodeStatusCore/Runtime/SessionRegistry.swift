@@ -26,9 +26,6 @@ public enum RegistryEvent: Sendable, Equatable {
 public struct SessionRegistry: Sendable {
     private var sessions: [SessionID: AgentSession] = [:]
     private var dedup: EventDeduplicator
-    /// Routes events that identify a session only by process, such as exits
-    /// reported by the process watcher.
-    private var pidIndex: [pid_t: SessionID] = [:]
 
     public init(dedupCapacity: Int = 4096) {
         dedup = EventDeduplicator(capacity: dedupCapacity)
@@ -76,13 +73,16 @@ public struct SessionRegistry: Sendable {
     /// session id, so the same agent is adopted twice before the hook arrives.
     /// Counting both reported an agent as silent while its own row sat directly
     /// above saying otherwise, which reads as the app inventing sessions. The
-    /// pid is what proves they are the same process.
+    /// provider, pid, and known start times identify the same process incarnation.
     public var unreported: [AgentSession] {
-        let reportingPIDs = Set(sessions.values.filter(\.hasHookEvidence).compactMap(\.pid))
+        let reporting = sessions.values.filter { $0.hasHookEvidence && $0.state.isActive }
         return sessions.values.filter { session in
             guard session.state.isActive, !session.hasHookEvidence else { return false }
             guard let pid = session.pid else { return true }
-            return !reportingPIDs.contains(pid)
+            return !reporting.contains {
+                $0.provider == session.provider
+                    && $0.matchesProcess(pid: pid, startTime: session.processStartTime)
+            }
         }
     }
 
@@ -118,6 +118,26 @@ public struct SessionRegistry: Sendable {
     /// De-duplication happens here rather than in the reducer so that a repeated
     /// delivery costs nothing and, crucially, cannot fire a second notification.
     public mutating func ingest(_ event: AgentEvent, now: Date = Date()) -> [RegistryEvent] {
+        // A server can host many conversations. Its exit ends every session
+        // belonging to that process incarnation. Exit evidence is retryable:
+        // a late hook may introduce a session after we first observed the exit.
+        // The reducer's ended state prevents repeated transitions.
+        if event.kind == .processExited, event.source == .process, let pid = event.pid {
+            let ids = sessions.values.filter {
+                $0.state.isActive && $0.provider == event.provider
+                    && $0.matchesProcess(pid: pid, startTime: event.processStartTime)
+            }.map(\.id)
+            return ids.flatMap { id in
+                guard let session = sessions[id] else { return [RegistryEvent]() }
+                let reduction = StateReducer.reduce(session, applying: event)
+                sessions[id] = reduction.session
+                if case .stateChanged(let transition) = reduction.outcome {
+                    return [.sessionChanged(transition)]
+                }
+                return []
+            }
+        }
+
         guard dedup.admit(event.id) else {
             return [.eventDropped(event.id, .duplicate)]
         }
@@ -149,7 +169,6 @@ public struct SessionRegistry: Sendable {
 
         let reduction = StateReducer.reduce(session, applying: event)
         sessions[id] = reduction.session
-        indexPID(for: reduction.session)
 
         switch reduction.outcome {
         case .stateChanged(let transition):
@@ -172,16 +191,13 @@ public struct SessionRegistry: Sendable {
         if let providerSessionID = event.providerSessionID, !providerSessionID.isEmpty {
             return SessionID.provider(event.provider, providerSessionID)
         }
-        // Fallback for process-sourced events, which know only a pid.
-        if let pid = event.pid, let known = pidIndex[pid] {
-            return known
+        // A PID alone cannot choose between conversations sharing a server.
+        guard let pid = event.pid else { return nil }
+        let candidates = sessions.values.filter {
+            $0.state.isActive && $0.provider == event.provider
+                && $0.matchesProcess(pid: pid, startTime: event.processStartTime)
         }
-        return nil
-    }
-
-    private mutating func indexPID(for session: AgentSession) {
-        guard let pid = session.pid else { return }
-        pidIndex[pid] = session.id
+        return candidates.count == 1 ? candidates.first?.id : nil
     }
 
     // MARK: - Lifecycle
@@ -197,7 +213,10 @@ public struct SessionRegistry: Sendable {
         startTime: UInt64,
         now: Date
     ) -> RegistryEvent? {
-        if let existing = pidIndex[pid], sessions[existing] != nil { return nil }
+        guard !sessions.values.contains(where: {
+            $0.state.isActive && $0.provider == provider
+                && $0.matchesProcess(pid: pid, startTime: startTime)
+        }) else { return nil }
         let id = SessionID.process(provider, pid: pid, startTime: startTime)
         guard sessions[id] == nil else { return nil }
 
@@ -213,8 +232,27 @@ public struct SessionRegistry: Sendable {
         session.processStartTime = startTime
         session.capabilities = [.canOpen]
         sessions[id] = session
-        pidIndex[pid] = id
         return .sessionAdded(id)
+    }
+
+    /// Enrich the live process incarnation before ending conflicting old ones.
+    /// Otherwise an old exit could also match a newly learned session whose
+    /// process start time has not yet been filled in.
+    public mutating func enrichProcess(
+        _ snapshot: ProcessSnapshot, at now: Date = Date()
+    ) -> [RegistryEvent] {
+        var exits: [AgentEvent] = []
+        for (id, var session) in sessions where session.state.isActive && session.pid == snapshot.pid {
+            if session.enrichProcess(snapshot) {
+                sessions[id] = session
+            } else {
+                exits.append(ProcessWatcher.exitEvent(
+                    pid: snapshot.pid, startTime: session.processStartTime ?? 0,
+                    provider: session.provider, at: now
+                ))
+            }
+        }
+        return exits.flatMap { ingest($0) }
     }
 
     /// Puts every active session into ``AgentState/reconnecting`` after a wake or
@@ -238,7 +276,6 @@ public struct SessionRegistry: Sendable {
         for (id, session) in sessions
         where session.state == .ended && now.timeIntervalSince(session.stateChangedAt) >= interval {
             sessions.removeValue(forKey: id)
-            if let pid = session.pid, pidIndex[pid] == id { pidIndex.removeValue(forKey: pid) }
             removed.append(.sessionRemoved(id))
         }
         return removed
@@ -249,7 +286,6 @@ public struct SessionRegistry: Sendable {
     public mutating func update(_ session: AgentSession) {
         guard sessions[session.id] != nil else { return }
         sessions[session.id] = session
-        indexPID(for: session)
     }
 
     /// Drops one session immediately, without waiting for it to end and linger.
@@ -259,10 +295,10 @@ public struct SessionRegistry: Sendable {
     /// where this one throws away a session we may still believe is running.
     @discardableResult
     public mutating func remove(_ id: SessionID) -> [RegistryEvent] {
-        guard let session = sessions.removeValue(forKey: id) else { return [] }
-        if let pid = session.pid, pidIndex[pid] == id { pidIndex.removeValue(forKey: pid) }
+        guard sessions.removeValue(forKey: id) != nil else { return [] }
         return [.sessionRemoved(id)]
     }
+
     /// Corrects discovery before the client's daemon connection was visible.
     /// A real hook identity must survive even if its process is also a client.
     public mutating func removeUnreportedCodexClients(_ clients: [ProcessSnapshot]) -> [RegistryEvent] {

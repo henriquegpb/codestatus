@@ -117,6 +117,8 @@ public struct AgentEvent: Sendable, Equatable {
     public let cwd: String?
     /// The agent's pid, captured by the hook as `getppid()`.
     public let pid: pid_t?
+    /// Kernel identity for process-exit evidence; never supplied by a hook.
+    public let processStartTime: UInt64?
     public let termProgram: String?
     public let termSessionID: String?
 
@@ -138,6 +140,7 @@ public struct AgentEvent: Sendable, Equatable {
         model: String? = nil,
         cwd: String? = nil,
         pid: pid_t? = nil,
+        processStartTime: UInt64? = nil,
         termProgram: String? = nil,
         termSessionID: String? = nil
     ) {
@@ -158,6 +161,7 @@ public struct AgentEvent: Sendable, Equatable {
         self.model = model
         self.cwd = cwd
         self.pid = pid
+        self.processStartTime = processStartTime
         self.termProgram = termProgram
         self.termSessionID = termSessionID
     }
