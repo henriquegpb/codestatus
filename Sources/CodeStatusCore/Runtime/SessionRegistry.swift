@@ -299,6 +299,26 @@ public struct SessionRegistry: Sendable {
         return [.sessionRemoved(id)]
     }
 
+    /// Removes only the explicit conversation identity of a rejected hook,
+    /// even if earlier metadata did not include its working directory yet.
+    /// A PID alone cannot prove which conversation belongs to a worker.
+    @discardableResult
+    public mutating func removeSession(for event: AgentEvent) -> [RegistryEvent] {
+        guard let sessionID = event.providerSessionID, !sessionID.isEmpty else { return [] }
+        return remove(.provider(event.provider, sessionID))
+    }
+
+    /// Internal memory maintenance is not a conversation the user is waiting on.
+    @discardableResult
+    public mutating func removeCodexMemoryWorkers(
+        isMemoryWorkspace: (String) -> Bool
+    ) -> [RegistryEvent] {
+        let ids = sessions.values.filter {
+            $0.provider == .codex && $0.cwd.map(isMemoryWorkspace) == true
+        }.map(\.id)
+        return ids.flatMap { remove($0) }
+    }
+
     /// Corrects discovery before the client's daemon connection was visible.
     /// A real hook identity must survive even if its process is also a client.
     public mutating func removeUnreportedCodexClients(_ clients: [ProcessSnapshot]) -> [RegistryEvent] {

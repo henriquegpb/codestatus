@@ -221,6 +221,11 @@ final class SessionDaemon {
 
     private func apply(_ event: AgentEvent) {
         if event.source == .hook { recordHookEvidence(for: event.provider) }
+        if event.provider == .codex, let cwd = event.cwd,
+           CodexMemoryWorkspace.contains(cwd) {
+            handle(registry.removeSession(for: event))
+            return
+        }
         let results = registry.ingest(event)
         // A hook event is the session telling us it is alive. Honouring a
         // dismissal past that point would mean hiding a working session, which
@@ -298,6 +303,7 @@ final class SessionDaemon {
     /// is precisely the report that makes the whole app untrustworthy.
     private func reconcileProcesses() {
         let inspector = ProcessInspector()
+        handle(registry.removeCodexMemoryWorkers(isMemoryWorkspace: CodexMemoryWorkspace.contains))
         handle(registry.removeUnreportedCodexClients(inspector.codexClientProcesses()))
         for session in registry.all where session.state.isActive {
             guard let pid = session.pid else { continue }
@@ -327,6 +333,8 @@ final class SessionDaemon {
     }
 
     private func adopt(_ process: AgentProcess) {
+        if process.provider == .codex, let cwd = process.workingDirectory,
+           CodexMemoryWorkspace.contains(cwd) { return }
         // Identity is (provider, pid, start time), so this suppresses the exact
         // process the user dismissed and not a later one that reuses its pid.
         let identity = SessionID.process(
