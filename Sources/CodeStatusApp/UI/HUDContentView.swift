@@ -94,10 +94,10 @@ struct HUDContentView: View {
                 NotConnectedCallout(providers: model.unreportedDiagnosis.notConnected)
                     .padding(.top, model.sessions.isEmpty ? 0 : 8)
             }
-            if model.showsCodexTrustCallout {
-                CodexTrustCallout(
-                    count: model.unreportedDiagnosis.codexAwaitingTrust,
-                    onDismiss: { model.dismissCodexTrustCallout() }
+            if model.showsCodexReportingCallout {
+                CodexReportingCallout(
+                    count: model.unreportedDiagnosis.codexNotReporting,
+                    onDismiss: { model.dismissCodexReportingCallout() }
                 )
                 .padding(.top, model.sessions.isEmpty ? 0 : 8)
             }
@@ -227,16 +227,13 @@ private struct NotConnectedCallout: View {
     }
 }
 
-// MARK: - Codex trust
+// MARK: - Codex reporting
 
 /// Says that Codex is running and silent, and what to do about it.
 ///
-/// Loud on purpose. This is the one failure the app cannot recover from on its
-/// own and cannot even detect without being told: Codex refuses to run hooks it
-/// has not been trusted with, and it refuses *silently*, so the symptom is an
-/// app that appears to do nothing. A grey footnote is what this used to be, and
-/// it read as "nothing is happening" rather than "something is wrong".
-private struct CodexTrustCallout: View {
+/// Missing hook evidence needs an actionable explanation, but does not tell us
+/// whether hooks are untrusted, have not run yet, or failed to reach the app.
+private struct CodexReportingCallout: View {
     let count: Int
     var onDismiss: () -> Void
 
@@ -260,10 +257,10 @@ private struct CodexTrustCallout: View {
                 // as the single sentence it is, and the monospaced run keeps its
                 // own font through the concatenation.
                 (
-                    Text("Run ")
+                    Text("Send a prompt in that session. If it stays silent, check ")
                         + Text("/hooks")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        + Text(" in Codex and trust the CodeStatus entries.")
+                        + Text(" and CodeStatus Diagnostics.")
                 )
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -273,9 +270,8 @@ private struct CodexTrustCallout: View {
             Spacer(minLength: 4)
 
             // Dismissible because the instruction is not always one the reader
-            // means to follow: plenty of people run Codex without wanting
-            // CodeStatus to see it, and for them this is a permanent banner
-            // reporting a decision they already made.
+            // means to follow: someone may deliberately leave a terminal idle
+            // or use Codex without wanting CodeStatus to track it.
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))

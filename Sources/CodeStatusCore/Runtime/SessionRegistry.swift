@@ -263,4 +263,13 @@ public struct SessionRegistry: Sendable {
         if let pid = session.pid, pidIndex[pid] == id { pidIndex.removeValue(forKey: pid) }
         return [.sessionRemoved(id)]
     }
+    /// Corrects discovery before the client's daemon connection was visible.
+    /// A real hook identity must survive even if its process is also a client.
+    public mutating func removeUnreportedCodexClients(_ clients: [ProcessSnapshot]) -> [RegistryEvent] {
+        clients.flatMap { client -> [RegistryEvent] in
+            let id = SessionID.process(.codex, pid: client.pid, startTime: client.startTime)
+            guard let session = sessions[id], !session.hasHookEvidence else { return [] }
+            return remove(id)
+        }
+    }
 }

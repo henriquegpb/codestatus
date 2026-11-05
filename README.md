@@ -174,6 +174,10 @@ Limitations are stated, not hidden. This is what we can actually do per environm
 
 Why the gaps:
 
+- **Codex terminal clients can share a backend.** A terminal process with a verified
+  Unix-socket connection to a Codex service is not counted as a separate session.
+  Actual sessions still come from hooks. A silent process alone does not prove its
+  hooks are untrusted.
 - **Approval alerts have a three-second grace period on macOS.** A tool result or
   another state change cancels the pending alert. Codex's permission hook runs before
   automatic review, and there is no hook when execution starts, so a long command can

@@ -25,23 +25,23 @@ public final class HUDModel {
     /// Ticks so durations re-render without every view owning a timer.
     public private(set) var now: Date = Date()
 
-    /// The largest Codex trust count the user has waved away.
+    /// The largest unreported Codex count the user has waved away.
     ///
     /// Dismissal is scoped to the situation rather than permanent. Someone who
-    /// has decided not to trust these sessions should not be nagged about them
+    /// has chosen not to track these sessions should not be nagged about them
     /// again, but a *new* silent session is new information, so the callout comes
     /// back when the count climbs past what was dismissed, and resets entirely
     /// once the problem clears.
-    private var dismissedCodexTrustCount = 0
+    private var dismissedCodexReportingCount = 0
 
     public init() {}
 
-    public var showsCodexTrustCallout: Bool {
-        unreportedDiagnosis.codexAwaitingTrust > dismissedCodexTrustCount
+    public var showsCodexReportingCallout: Bool {
+        unreportedDiagnosis.codexNotReporting > dismissedCodexReportingCount
     }
 
-    public func dismissCodexTrustCallout() {
-        dismissedCodexTrustCount = unreportedDiagnosis.codexAwaitingTrust
+    public func dismissCodexReportingCallout() {
+        dismissedCodexReportingCount = unreportedDiagnosis.codexNotReporting
     }
 
     /// How wide the popover should be for what it currently holds.
@@ -88,7 +88,7 @@ public final class HUDModel {
         unreportedDiagnosis = diagnosis
         // Cleared rather than carried: once nothing is silent, the next silence
         // is a fresh problem and deserves to be heard.
-        if diagnosis.codexAwaitingTrust == 0 { dismissedCodexTrustCount = 0 }
+        if diagnosis.codexNotReporting == 0 { dismissedCodexReportingCount = 0 }
         self.now = now
     }
 

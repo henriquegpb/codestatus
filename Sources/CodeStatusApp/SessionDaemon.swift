@@ -67,7 +67,7 @@ final class SessionDaemon {
 
     /// So the "Codex is not reporting" notice is posted once per run rather
     /// than on every sweep that re-observes the same silent session.
-    private var didWarnAboutCodexTrust = false
+    private var didWarnAboutCodexReporting = false
 
     /// Which set of unconnected agents we have already mentioned, so the notice
     /// returns if a *different* agent appears but never repeats itself.
@@ -289,14 +289,16 @@ final class SessionDaemon {
         publish()
     }
 
-    /// Ends any session whose process is no longer there.
+    /// Reconciles sessions with process metadata: remove misidentified clients
+    /// and end sessions whose processes no longer exist.
     ///
     /// Belt to the kqueue's braces. Every path that should have caught these is
     /// now wired, but a session whose exit we miss is invisible-by-omission in
     /// the worst way: it claims an agent is busy when nothing is running, which
     /// is precisely the report that makes the whole app untrustworthy.
-    private func reapDeadSessions() {
+    private func reconcileProcesses() {
         let inspector = ProcessInspector()
+        handle(registry.removeUnreportedCodexClients(inspector.codexClientProcesses()))
         for session in registry.all where session.state.isActive {
             guard let pid = session.pid else { continue }
             let alive = session.processStartTime.map {
@@ -527,7 +529,7 @@ final class SessionDaemon {
         ticksSinceReap += 1
         if ticksSinceReap >= Self.reapInterval {
             ticksSinceReap = 0
-            reapDeadSessions()
+            reconcileProcesses()
             drainSpoolIfNotEmpty()
             // Noted rather than published immediately: returning here would
             // skip the prune below, leaving an ended session on screen past
@@ -592,7 +594,7 @@ final class SessionDaemon {
     private func publish(_ now: Date = Date()) {
         let diagnosis = currentDiagnosis(now)
         model.apply(registry, diagnosis: diagnosis, now: now)
-        warnAboutCodexTrustIfNeeded(diagnosis)
+        warnAboutCodexReportingIfNeeded(diagnosis)
         onRegistryChanged?()
     }
 
@@ -608,6 +610,7 @@ final class SessionDaemon {
         // reaching for it — a row cleared away by accident — and it would fail
         // silently, since a suppressed session looks exactly like no session.
         dismissed.removeAll()
+        reconcileProcesses()
         // Titles otherwise move only on the ten-second tick, which makes
         // Refresh look broken in the one case somebody actually reaches for it:
         // a session has just been named and they want the name now. The reads
@@ -647,7 +650,7 @@ final class SessionDaemon {
     /// nothing, which reads as CodeStatus being broken. The popover carries the
     /// same message persistently; this is what reaches someone who is not
     /// looking at it.
-    private func warnAboutCodexTrustIfNeeded(_ diagnosis: UnreportedDiagnosis) {
+    private func warnAboutCodexReportingIfNeeded(_ diagnosis: UnreportedDiagnosis) {
         // "Never connected" first: pointing someone at /hooks when their
         // hooks.json has no entries sends them to a screen that correctly
         // reports zero, which is how a user ends up concluding the app is
@@ -656,14 +659,14 @@ final class SessionDaemon {
             warnAboutUnconnectedAgents(diagnosis.notConnected)
             return
         }
-        guard diagnosis.codexAwaitingTrust > 0, !didWarnAboutCodexTrust else { return }
-        didWarnAboutCodexTrust = true
-        logger.notice("codex sessions running with untrusted hooks")
+        guard diagnosis.codexNotReporting > 0, !didWarnAboutCodexReporting else { return }
+        didWarnAboutCodexReporting = true
+        logger.notice("codex processes running without hook evidence; cause unknown")
         notifications.postSetupNotice(
             title: "Codex isn’t reporting",
-            body: "Codex only runs hooks you have trusted. Run /hooks in Codex "
-                + "and trust the CodeStatus entries.",
-            identifier: "co.codestatus.setup.codex-untrusted"
+            body: "Send a prompt in that session. If it stays silent, check /hooks "
+                + "and CodeStatus Diagnostics.",
+            identifier: "co.codestatus.setup.codex-not-reporting"
         )
     }
 
