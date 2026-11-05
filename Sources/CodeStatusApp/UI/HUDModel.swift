@@ -51,11 +51,11 @@ public final class HUDModel {
     /// its right-hand column lines up with the others, which means asking the
     /// layout to size itself would return the maximum every time. The one thing
     /// that genuinely needs the extra width is an agent-written session title,
-    /// since it sits beside the location and is the first thing to truncate.
+    /// which leads the row with the location beside it.
     /// Without one, the widest row is a repository name and the window was mostly
     /// empty space.
     public var preferredWidth: CGFloat {
-        sessions.contains { $0.secondaryLabel != nil } ? Self.titledWidth : Self.plainWidth
+        sessions.contains { $0.agentTitle != nil } ? Self.titledWidth : Self.plainWidth
     }
 
     /// Fits "Refresh · Settings · Quit" and a quota row without crowding either.

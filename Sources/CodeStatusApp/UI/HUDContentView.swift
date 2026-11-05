@@ -421,25 +421,17 @@ private struct SessionRow: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
-                // The location leads and the agent's title rides beside it,
-                // dimmed. Sharing the top line rather than taking the one below
-                // is what keeps the meta line readable: the location added
-                // there truncated both itself and the provider next to it.
-                //
-                // The layout priority is the whole trick — without it the two
-                // shrink together and a long title takes the repository down
-                // with it. The location is short and fixed, so it is given the
-                // space it needs and the title truncates into what is left.
+                // Give the session title priority; its project truncates first.
                 HStack(spacing: 4) {
                     Text(session.primaryLabel)
                         .font(.system(size: 13, weight: .medium))
                         .layoutPriority(1)
 
-                    if let title = session.secondaryLabel {
+                    if let location = session.secondaryLabel {
                         Text("·")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
-                        Text(title)
+                        Text(location)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
