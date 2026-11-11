@@ -29,9 +29,9 @@ private func silentSession(
 @Suite("Why sessions are not reporting")
 struct UnreportedDiagnosisTests {
 
-    /// The case that made a real user think the app was broken: Codex running
-    /// fine, hooks installed, and total silence because nobody ran `/hooks`.
-    @Test func codexSilentAfterItsHooksWereInstalledIsATrustProblem() {
+    /// Even trusted hooks can be silent; process timing establishes missing
+    /// evidence, not a trust failure.
+    @Test func codexSilenceAfterInstallationDoesNotEstablishItsCause() {
         let session = silentSession(.codex, startedRelativeToInstall: 60)
         let diagnosis = UnreportedDiagnosis.diagnose(
             sessions: [session],
@@ -39,7 +39,7 @@ struct UnreportedDiagnosisTests {
             now: installedAt.addingTimeInterval(300)
         )
 
-        #expect(diagnosis.codexAwaitingTrust == 1)
+        #expect(diagnosis.codexNotReporting == 1)
         #expect(diagnosis.predatesHooks == 0)
         #expect(diagnosis.unexplained == 0)
     }
@@ -55,7 +55,7 @@ struct UnreportedDiagnosisTests {
         )
 
         #expect(diagnosis.predatesHooks == 1)
-        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.codexNotReporting == 0)
     }
 
     /// A brand new session has not had time to say anything, and accusing it
@@ -69,7 +69,7 @@ struct UnreportedDiagnosisTests {
             now: now
         )
 
-        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.codexNotReporting == 0)
         #expect(diagnosis.unexplained == 1)
     }
 
@@ -83,11 +83,11 @@ struct UnreportedDiagnosisTests {
             now: now
         )
 
-        #expect(diagnosis.codexAwaitingTrust == 1)
+        #expect(diagnosis.codexNotReporting == 1)
     }
 
-    /// Claude Code has no trust step, so its silence is never diagnosed as one.
-    @Test func claudeSilenceIsNeverReportedAsATrustProblem() {
+    /// The Codex-specific reporting hint must not mislabel another provider.
+    @Test func claudeSilenceIsNotReportedAsCodexSilence() {
         let session = silentSession(.claudeCode, startedRelativeToInstall: 60)
         let diagnosis = UnreportedDiagnosis.diagnose(
             sessions: [session],
@@ -95,7 +95,7 @@ struct UnreportedDiagnosisTests {
             now: installedAt.addingTimeInterval(300)
         )
 
-        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.codexNotReporting == 0)
         #expect(diagnosis.unexplained == 1)
     }
 
@@ -116,7 +116,7 @@ struct UnreportedDiagnosisTests {
         )
 
         #expect(diagnosis.notConnected == [.codex: 1])
-        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.codexNotReporting == 0)
         #expect(diagnosis.unexplained == 0)
         #expect(diagnosis.total == 1)
     }
@@ -136,7 +136,7 @@ struct UnreportedDiagnosisTests {
 
         #expect(diagnosis.unexplained == 1)
         #expect(diagnosis.notConnected.isEmpty)
-        #expect(diagnosis.codexAwaitingTrust == 0)
+        #expect(diagnosis.codexNotReporting == 0)
     }
 
     /// A receipt proves we once wrote the file, not that the entries survived.
@@ -181,7 +181,7 @@ struct UnreportedDiagnosisTests {
             now: installedAt.addingTimeInterval(600)
         )
 
-        #expect(diagnosis.codexAwaitingTrust == 2)
+        #expect(diagnosis.codexNotReporting == 2)
         #expect(diagnosis.predatesHooks == 1)
         #expect(diagnosis.unexplained == 1)
         #expect(diagnosis.total == 4)

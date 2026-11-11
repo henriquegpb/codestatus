@@ -1,29 +1,16 @@
 import Foundation
 
-/// Why live agent sessions are running without reporting anything.
+/// What process and installation metadata establish about unreported sessions.
 ///
-/// The registry can see that a process exists and that no hook event has ever
-/// arrived from it (``SessionRegistry/unreported``). That fact alone has two
-/// very different causes, and telling the user the wrong one is worse than
-/// saying nothing:
-///
-///  * The session was already running when its hooks were installed. Both
-///    agents read their hook configuration once, at session start, so it will
-///    never report and a new session fixes it. Nothing is broken.
-///  * Codex has hooks installed but has not been told to trust them. Codex
-///    refuses to execute anything in `hooks.json` until the user approves it
-///    through `/hooks`, and it fails *silently* — Codex works normally and
-///    CodeStatus simply shows nothing, which reads as CodeStatus being broken.
-///
-/// The two are distinguishable, because we record when we wrote each config
-/// file and the kernel records when each process started. A Codex process that
-/// started *after* we installed its hooks and has still never said a word is
-/// not a timing accident: it is an untrusted hooks file.
+/// A live process without hook evidence does not establish why delivery failed.
+/// In particular, hooks can be trusted while a session remains silent. Start
+/// times distinguish sessions that predate installation; they cannot prove a
+/// trust failure or that the session has emitted an event while we were listening.
 public struct UnreportedDiagnosis: Sendable, Equatable {
 
     /// Codex sessions that started after `hooks.json` was written and have
-    /// still never reported. The user has to run `/hooks` in Codex.
-    public var codexAwaitingTrust: Int = 0
+    /// still never reported after the settling period. The cause is unknown.
+    public var codexNotReporting: Int = 0
 
     /// Sessions of an agent CodeStatus has never connected at all.
     ///
@@ -44,12 +31,12 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
     public var unexplained: Int = 0
 
     public init(
-        codexAwaitingTrust: Int = 0,
+        codexNotReporting: Int = 0,
         notConnected: [AgentProvider: Int] = [:],
         predatesHooks: Int = 0,
         unexplained: Int = 0
     ) {
-        self.codexAwaitingTrust = codexAwaitingTrust
+        self.codexNotReporting = codexNotReporting
         self.notConnected = notConnected
         self.predatesHooks = predatesHooks
         self.unexplained = unexplained
@@ -58,7 +45,7 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
     public var notConnectedTotal: Int { notConnected.values.reduce(0, +) }
 
     public var total: Int {
-        codexAwaitingTrust + notConnectedTotal + predatesHooks + unexplained
+        codexNotReporting + notConnectedTotal + predatesHooks + unexplained
     }
 
     public var isEmpty: Bool { total == 0 }
@@ -118,16 +105,15 @@ public struct UnreportedDiagnosis: Sendable, Equatable {
                 continue
             }
 
-            // Started after the install and still silent. For Codex that is the
-            // trust step; for anything else we have no such explanation, and
-            // guessing would be worse than admitting it.
+            // Allow startup to settle before surfacing missing Codex evidence.
+            // Silence does not tell us whether hooks are trusted or have run.
             guard now.timeIntervalSince(startedAt) >= settlingPeriod else {
                 diagnosis.unexplained += 1
                 continue
             }
 
             if session.provider == .codex {
-                diagnosis.codexAwaitingTrust += 1
+                diagnosis.codexNotReporting += 1
             } else {
                 diagnosis.unexplained += 1
             }

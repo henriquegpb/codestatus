@@ -25,23 +25,23 @@ public final class HUDModel {
     /// Ticks so durations re-render without every view owning a timer.
     public private(set) var now: Date = Date()
 
-    /// The largest Codex trust count the user has waved away.
+    /// The largest unreported Codex count the user has waved away.
     ///
     /// Dismissal is scoped to the situation rather than permanent. Someone who
-    /// has decided not to trust these sessions should not be nagged about them
+    /// has chosen not to track these sessions should not be nagged about them
     /// again, but a *new* silent session is new information, so the callout comes
     /// back when the count climbs past what was dismissed, and resets entirely
     /// once the problem clears.
-    private var dismissedCodexTrustCount = 0
+    private var dismissedCodexReportingCount = 0
 
     public init() {}
 
-    public var showsCodexTrustCallout: Bool {
-        unreportedDiagnosis.codexAwaitingTrust > dismissedCodexTrustCount
+    public var showsCodexReportingCallout: Bool {
+        unreportedDiagnosis.codexNotReporting > dismissedCodexReportingCount
     }
 
-    public func dismissCodexTrustCallout() {
-        dismissedCodexTrustCount = unreportedDiagnosis.codexAwaitingTrust
+    public func dismissCodexReportingCallout() {
+        dismissedCodexReportingCount = unreportedDiagnosis.codexNotReporting
     }
 
     /// How wide the popover should be for what it currently holds.
@@ -51,11 +51,11 @@ public final class HUDModel {
     /// its right-hand column lines up with the others, which means asking the
     /// layout to size itself would return the maximum every time. The one thing
     /// that genuinely needs the extra width is an agent-written session title,
-    /// since it sits beside the location and is the first thing to truncate.
+    /// which leads the row with the location beside it.
     /// Without one, the widest row is a repository name and the window was mostly
     /// empty space.
     public var preferredWidth: CGFloat {
-        sessions.contains { $0.secondaryLabel != nil } ? Self.titledWidth : Self.plainWidth
+        sessions.contains { $0.agentTitle != nil } ? Self.titledWidth : Self.plainWidth
     }
 
     /// Fits "Refresh · Settings · Quit" and a quota row without crowding either.
@@ -88,7 +88,7 @@ public final class HUDModel {
         unreportedDiagnosis = diagnosis
         // Cleared rather than carried: once nothing is silent, the next silence
         // is a fresh problem and deserves to be heard.
-        if diagnosis.codexAwaitingTrust == 0 { dismissedCodexTrustCount = 0 }
+        if diagnosis.codexNotReporting == 0 { dismissedCodexReportingCount = 0 }
         self.now = now
     }
 

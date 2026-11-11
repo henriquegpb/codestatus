@@ -420,13 +420,19 @@ public struct ProcessInspector: Sendable {
     /// which could be hosting anything, and `codex`, which could be running a
     /// service subcommand rather than a session.
     public func identify(_ snapshot: ProcessSnapshot) -> AgentIdentity? {
+        guard AgentIdentification.isCodexExecutable(snapshot.executablePath) else {
+            return identify(snapshot, excluding: [])
+        }
+        let roles = codexProcessRoles(in: snapshotAll())
+        return identify(snapshot, excluding: roles.services.union(roles.clients))
+    }
+
+    private func identify(_ snapshot: ProcessSnapshot, excluding excludedPIDs: Set<pid_t>) -> AgentIdentity? {
+        guard !excludedPIDs.contains(snapshot.pid) else { return nil }
         let path = snapshot.executablePath
         // Resolved here rather than inside AgentIdentification so the argument
         // tokens never leave this scope — the caller gets an identity or nil,
         // never a string that came out of the process's argv buffer.
-        if AgentIdentification.isCodexExecutable(path), runsAServiceSubcommand(pid: snapshot.pid) {
-            return nil
-        }
         let arguments = AgentIdentification.needsArgumentInspection(executablePath: path)
             ? identificationArguments(of: snapshot.pid, limit: 2)
             : []
@@ -448,13 +454,15 @@ public struct ProcessInspector: Sendable {
     /// deliberately nothing about what it is doing.
     public func discoverAgents() -> [AgentProcess] {
         let all = snapshotAll()
+        let roles = codexProcessRoles(in: all)
+        let excluded = roles.services.union(roles.clients)
         var table: [pid_t: ProcessSnapshot] = [:]
         table.reserveCapacity(all.count)
         for entry in all { table[entry.pid] = entry }
 
         var found: [AgentProcess] = []
         for entry in all {
-            guard let identity = identify(entry) else { continue }
+            guard let identity = identify(entry, excluding: excluded) else { continue }
             let ancestors = ancestry(of: entry.pid, in: table)
             var host = identity.hostApplication
             if host == .unknown {
@@ -479,6 +487,47 @@ public struct ProcessInspector: Sendable {
             )
         }
         return found
+    }
+
+    /// Terminal clients connected to a known Codex backend are not independent
+    /// sessions. Hook-reported sessions still arrive under their real identity.
+    public func codexClientProcesses() -> [ProcessSnapshot] {
+        let all = snapshotAll()
+        let clients = codexProcessRoles(in: all).clients
+        return all.filter { clients.contains($0.pid) }
+    }
+
+    private func codexProcessRoles(in all: [ProcessSnapshot]) -> (services: Set<pid_t>, clients: Set<pid_t>) {
+        let codex = all.filter { AgentIdentification.isCodexExecutable($0.executablePath) }
+        let services = Set(codex.filter { runsAServiceSubcommand(pid: $0.pid) }.map(\.pid))
+        guard !services.isEmpty else { return ([], []) }
+        let sockets = Dictionary(uniqueKeysWithValues: codex.map { ($0.pid, unixSocketConnections(of: $0.pid)) })
+        return (services, CodexClientConnections.clientPIDs(services: services, sockets: sockets))
+    }
+
+    private func unixSocketConnections(of pid: pid_t) -> [UnixSocketConnection] {
+        let needed = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard needed > 0 else { return [] }
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        // Descriptor tables can grow between calls. A full or inaccessible
+        // table can only miss a client; it must never invent a connection.
+        let capacity = min(Int(needed) / stride + 32, 16_384)
+        var descriptors = [proc_fdinfo](repeating: proc_fdinfo(), count: capacity)
+        let bytes = descriptors.withUnsafeMutableBytes {
+            proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count))
+        }
+        guard bytes > 0 else { return [] }
+        var connections: [UnixSocketConnection] = []
+        for fd in descriptors.prefix(Int(bytes) / stride) where fd.proc_fdtype == PROX_FDTYPE_SOCKET {
+            var info = socket_fdinfo()
+            let size = MemoryLayout<socket_fdinfo>.size
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, Int32(size)) == size,
+                  info.psi.soi_kind == SOCKINFO_UN else { continue }
+            connections.append(UnixSocketConnection(
+                socket: info.psi.soi_so, peer: info.psi.soi_proto.pri_un.unsi_conn_so
+            ))
+        }
+        return connections
     }
 
     // MARK: - Kernel plumbing
@@ -550,5 +599,21 @@ public struct ProcessInspector: Sendable {
     /// array is deprecated, so truncate at the terminator explicitly.
     private static func decode(_ buffer: [CChar]) -> String {
         String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+}
+
+public extension AgentSession {
+    /// Returns false without changing metadata if this PID has been reused.
+    @discardableResult
+    mutating func enrichProcess(_ snapshot: ProcessSnapshot) -> Bool {
+        guard matchesProcess(pid: snapshot.pid, startTime: snapshot.startTime) else { return false }
+        parentPID = snapshot.parentPID
+        processStartTime = snapshot.startTime
+        if let tty = snapshot.tty {
+            self.tty = tty
+            controlTarget.tty = tty
+            capabilities.insert(.canIdentifyExactWindow)
+        }
+        return true
     }
 }

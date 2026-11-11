@@ -115,6 +115,13 @@ One thing is read outside that channel, and it is worth being precise about. To 
 the name a session actually has — `Calendar fix` rather than a third row reading `backend` — the
 app reads the name Claude Code has for the session and `thread_name` from Codex's session index.
 
+Codex’s internal memory maintenance is excluded from the session list and counters. The app
+recognises its `memories` workspace only when the parent contains both Codex configuration
+and its memory database; an ordinary project named `memories` is still shown. This check
+uses file existence only and does not read memory or database contents.
+This is a directory heuristic: it also excludes genuine conversations opened in that
+workspace and may miss workers using different paths or marker-file layouts.
+
 Claude Code keeps that name in more than one place, and all three are read in this order: the
 desktop app's own session list, which is the only place a rename typed into that list is stored;
 then the newest `custom-title` record in the transcript; then `ai-title`, which is what a machine
@@ -174,6 +181,15 @@ Limitations are stated, not hidden. This is what we can actually do per environm
 
 Why the gaps:
 
+- **Codex terminal clients can share a backend.** A terminal process with a verified
+  Unix-socket connection to a Codex service is not counted as a separate session.
+  Actual sessions still come from hooks. A silent process alone does not prove its
+  hooks are untrusted.
+- **Approval alerts have a three-second grace period on macOS.** A tool result or
+  another state change cancels the pending alert. Codex's permission hook runs before
+  automatic review, and there is no hook when execution starts, so a long command can
+  still trigger an alert after automatic approval. Its banner says "may need approval"
+  rather than claiming a human prompt is visible.
 - **Codex "Input" is no.** Codex has no `Notification` event, so "the agent is waiting for you
   to answer a question" is not observable through any official channel. Approval requests *are*,
   via `PermissionRequest`.

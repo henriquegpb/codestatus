@@ -194,7 +194,8 @@ public final class ProcessWatcher: @unchecked Sendable {
             kind: .processExited,
             source: .process,
             timestamp: timestamp,
-            pid: pid
+            pid: pid,
+            processStartTime: startTime
         )
     }
 

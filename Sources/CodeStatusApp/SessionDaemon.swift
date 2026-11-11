@@ -67,7 +67,7 @@ final class SessionDaemon {
 
     /// So the "Codex is not reporting" notice is posted once per run rather
     /// than on every sweep that re-observes the same silent session.
-    private var didWarnAboutCodexTrust = false
+    private var didWarnAboutCodexReporting = false
 
     /// Which set of unconnected agents we have already mentioned, so the notice
     /// returns if a *different* agent appears but never repeats itself.
@@ -221,6 +221,11 @@ final class SessionDaemon {
 
     private func apply(_ event: AgentEvent) {
         if event.source == .hook { recordHookEvidence(for: event.provider) }
+        if event.provider == .codex, let cwd = event.cwd,
+           CodexMemoryWorkspace.contains(cwd) {
+            handle(registry.removeSession(for: event))
+            return
+        }
         let results = registry.ingest(event)
         // A hook event is the session telling us it is alive. Honouring a
         // dismissal past that point would mean hiding a working session, which
@@ -289,19 +294,22 @@ final class SessionDaemon {
         publish()
     }
 
-    /// Ends any session whose process is no longer there.
+    /// Reconciles sessions with process metadata: remove misidentified clients
+    /// and end sessions whose processes no longer exist.
     ///
     /// Belt to the kqueue's braces. Every path that should have caught these is
     /// now wired, but a session whose exit we miss is invisible-by-omission in
     /// the worst way: it claims an agent is busy when nothing is running, which
     /// is precisely the report that makes the whole app untrustworthy.
-    private func reapDeadSessions() {
+    private func reconcileProcesses() {
         let inspector = ProcessInspector()
+        handle(registry.removeCodexMemoryWorkers(isMemoryWorkspace: CodexMemoryWorkspace.contains))
+        handle(registry.removeUnreportedCodexClients(inspector.codexClientProcesses()))
         for session in registry.all where session.state.isActive {
             guard let pid = session.pid else { continue }
-            let alive = session.processStartTime.map {
-                inspector.isAlive(pid: pid, startTime: $0)
-            } ?? (inspector.snapshot(pid: pid) != nil)
+            let alive = inspector.snapshot(pid: pid).map {
+                session.matchesProcess(pid: $0.pid, startTime: $0.startTime)
+            } ?? false
             guard !alive else { continue }
             logger.info("reaping \(session.id.rawValue, privacy: .public): its process is gone")
             apply(ProcessWatcher.exitEvent(
@@ -325,6 +333,8 @@ final class SessionDaemon {
     }
 
     private func adopt(_ process: AgentProcess) {
+        if process.provider == .codex, let cwd = process.workingDirectory,
+           CodexMemoryWorkspace.contains(cwd) { return }
         // Identity is (provider, pid, start time), so this suppresses the exact
         // process the user dismissed and not a later one that reuses its pid.
         let identity = SessionID.process(
@@ -356,11 +366,16 @@ final class SessionDaemon {
                 guard let session = registry[transition.sessionID] else { continue }
                 // The stale filter is what prevents a wake from firing a burst
                 // of notifications for turns that finished hours ago.
-                if sleepWake.shouldNotify(for: transition, now: Date()) {
-                    notifications.handle(transition, session: session)
-                }
+                notifications.handle(
+                    transition, session: session,
+                    eligible: sleepWake.shouldNotify(for: transition, now: Date())
+                )
 
-            case .sessionRefreshed, .sessionRemoved:
+            case .sessionRemoved(let id):
+                notifications.cancelPendingApproval(for: id)
+                changed = true
+
+            case .sessionRefreshed:
                 changed = true
 
             case .eventDropped(let id, let reason):
@@ -384,7 +399,7 @@ final class SessionDaemon {
             // without this the session would sit in the list forever, since
             // nothing else was ever going to tell us about a process we never
             // subscribed to.
-            if let session = registry.all.first(where: { $0.pid == pid }), session.state.isActive {
+            for session in registry.all where session.pid == pid && session.state.isActive {
                 logger.info("pid \(pid, privacy: .public) was already gone when we went to enrich it")
                 apply(ProcessWatcher.exitEvent(
                     pid: pid,
@@ -394,29 +409,22 @@ final class SessionDaemon {
             }
             return
         }
-        guard var session = registry.all.first(where: { $0.pid == pid }) else { return }
-
-        session.parentPID = snapshot.parentPID
-        session.processStartTime = snapshot.startTime
-        if let tty = snapshot.tty {
-            session.tty = tty
-            session.controlTarget.tty = tty
-            // A tty means we can name the exact tab, not just the application.
-            session.capabilities.insert(.canIdentifyExactWindow)
+        handle(registry.enrichProcess(snapshot))
+        for var session in registry.all where session.pid == pid && session.state.isActive {
+            if session.cwd == nil { session.cwd = inspector.workingDirectory(of: pid) }
+            if let cwd = session.cwd {
+                let root = Self.gitRoot(for: cwd)
+                session.gitRoot = root
+                session.repositoryName = root.map { ($0 as NSString).lastPathComponent }
+                session.controlTarget.workspacePath = root ?? cwd
+            }
+            registry.update(session)
+            // The fix for phantom rows. Sessions born from a hook event used to
+            // reach here and never subscribe to anything, so an agent that exited
+            // without sending SessionEnd — `codex exec` does exactly this — stayed
+            // Busy until the next sleep/wake reconciliation, which might be never.
+            watchForExit(session)
         }
-        if session.cwd == nil { session.cwd = inspector.workingDirectory(of: pid) }
-        if let cwd = session.cwd {
-            let root = Self.gitRoot(for: cwd)
-            session.gitRoot = root
-            session.repositoryName = root.map { ($0 as NSString).lastPathComponent }
-            session.controlTarget.workspacePath = root ?? cwd
-        }
-        registry.update(session)
-        // The fix for phantom rows. Sessions born from a hook event used to
-        // reach here and never subscribe to anything, so an agent that exited
-        // without sending SessionEnd — `codex exec` does exactly this — stayed
-        // Busy until the next sleep/wake reconciliation, which might be never.
-        watchForExit(session)
     }
 
     /// Subscribes to a session's process so its exit is noticed even when the
@@ -454,8 +462,10 @@ final class SessionDaemon {
         for action in actions {
             switch action {
             case .saveSnapshot:
+                notifications.cancelPendingApprovals()
                 saveSnapshot()
             case .markAllReconnecting(let date):
+                notifications.cancelPendingApprovals()
                 registry.markAllReconnecting(now: date)
             case .drainSpool:
                 let report = spool.drain { [weak self] event in
@@ -520,7 +530,7 @@ final class SessionDaemon {
         ticksSinceReap += 1
         if ticksSinceReap >= Self.reapInterval {
             ticksSinceReap = 0
-            reapDeadSessions()
+            reconcileProcesses()
             drainSpoolIfNotEmpty()
             // Noted rather than published immediately: returning here would
             // skip the prune below, leaving an ended session on screen past
@@ -585,7 +595,7 @@ final class SessionDaemon {
     private func publish(_ now: Date = Date()) {
         let diagnosis = currentDiagnosis(now)
         model.apply(registry, diagnosis: diagnosis, now: now)
-        warnAboutCodexTrustIfNeeded(diagnosis)
+        warnAboutCodexReportingIfNeeded(diagnosis)
         onRegistryChanged?()
     }
 
@@ -601,6 +611,7 @@ final class SessionDaemon {
         // reaching for it — a row cleared away by accident — and it would fail
         // silently, since a suppressed session looks exactly like no session.
         dismissed.removeAll()
+        reconcileProcesses()
         // Titles otherwise move only on the ten-second tick, which makes
         // Refresh look broken in the one case somebody actually reaches for it:
         // a session has just been named and they want the name now. The reads
@@ -640,7 +651,7 @@ final class SessionDaemon {
     /// nothing, which reads as CodeStatus being broken. The popover carries the
     /// same message persistently; this is what reaches someone who is not
     /// looking at it.
-    private func warnAboutCodexTrustIfNeeded(_ diagnosis: UnreportedDiagnosis) {
+    private func warnAboutCodexReportingIfNeeded(_ diagnosis: UnreportedDiagnosis) {
         // "Never connected" first: pointing someone at /hooks when their
         // hooks.json has no entries sends them to a screen that correctly
         // reports zero, which is how a user ends up concluding the app is
@@ -649,14 +660,14 @@ final class SessionDaemon {
             warnAboutUnconnectedAgents(diagnosis.notConnected)
             return
         }
-        guard diagnosis.codexAwaitingTrust > 0, !didWarnAboutCodexTrust else { return }
-        didWarnAboutCodexTrust = true
-        logger.notice("codex sessions running with untrusted hooks")
+        guard diagnosis.codexNotReporting > 0, !didWarnAboutCodexReporting else { return }
+        didWarnAboutCodexReporting = true
+        logger.notice("codex processes running without hook evidence; cause unknown")
         notifications.postSetupNotice(
             title: "Codex isn’t reporting",
-            body: "Codex only runs hooks you have trusted. Run /hooks in Codex "
-                + "and trust the CodeStatus entries.",
-            identifier: "co.codestatus.setup.codex-untrusted"
+            body: "Send a prompt in that session. If it stays silent, check /hooks "
+                + "and CodeStatus Diagnostics.",
+            identifier: "co.codestatus.setup.codex-not-reporting"
         )
     }
 

@@ -87,7 +87,7 @@ final class MenuBarController {
         // Deliberately not badged in the bar itself: an icon beside the counts
         // competes with them for the one glance the menu bar gets. The popover
         // carries the warning, and the tooltip carries it here.
-        // "Never connected" outranks "not trusted": it is the more fundamental
+        // "Never connected" outranks "not reporting": it is the more fundamental
         // problem, and pointing someone at /hooks when the file has no entries
         // sends them to a screen that correctly reports nothing.
         let codexNote: String?
@@ -95,8 +95,8 @@ final class MenuBarController {
             let names = model.unreportedDiagnosis.notConnected.keys
                 .map(\.displayName).sorted().formatted(.list(type: .and))
             codexNote = "\(names) is running but not connected. Open CodeStatus Settings › Agents"
-        } else if model.unreportedDiagnosis.codexAwaitingTrust > 0 {
-            codexNote = "Codex isn’t reporting. Run /hooks in Codex to trust CodeStatus"
+        } else if model.unreportedDiagnosis.codexNotReporting > 0 {
+            codexNote = "Codex isn’t reporting. Send a prompt in that session; if it stays silent, check /hooks and CodeStatus Diagnostics"
         } else {
             codexNote = nil
         }
